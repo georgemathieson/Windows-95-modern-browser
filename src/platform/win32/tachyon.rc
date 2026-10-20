@@ -1,0 +1,75 @@
+#include <windows.h>
+#include "resource.h"
+#include "tc_version.h"
+
+IDI_TACHYON ICON "res/tachyon.ico"
+
+IDR_MAINMENU MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open Location...\tCtrl+L",   IDM_FILE_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_FILE_EXIT
+    END
+    POPUP "&Edit"
+    BEGIN
+        MENUITEM "Cu&t\tCtrl+X",                IDM_EDIT_CUT
+        MENUITEM "&Copy\tCtrl+C",               IDM_EDIT_COPY
+        MENUITEM "&Paste\tCtrl+V",              IDM_EDIT_PASTE
+        MENUITEM SEPARATOR
+        MENUITEM "Select &All",                 IDM_EDIT_SELECTALL
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&Stop\tEsc",                  IDM_VIEW_STOP
+        MENUITEM "&Reload\tF5",                 IDM_VIEW_RELOAD
+    END
+    POPUP "&Go"
+    BEGIN
+        MENUITEM "&Back\tAlt+Left",             IDM_GO_BACK
+        MENUITEM "&Forward\tAlt+Right",         IDM_GO_FORWARD
+        MENUITEM "&Home\tAlt+Home",             IDM_GO_HOME
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Tachyon",              IDM_HELP_ABOUT
+    END
+END
+
+IDR_ACCEL ACCELERATORS
+BEGIN
+    "L",        IDM_FILE_OPEN,      VIRTKEY, CONTROL
+    VK_F6,      IDM_FILE_OPEN,      VIRTKEY
+    VK_ESCAPE,  IDM_VIEW_STOP,      VIRTKEY
+    VK_F5,      IDM_VIEW_RELOAD,    VIRTKEY
+    VK_LEFT,    IDM_GO_BACK,        VIRTKEY, ALT
+    VK_RIGHT,   IDM_GO_FORWARD,     VIRTKEY, ALT
+    VK_HOME,    IDM_GO_HOME,        VIRTKEY, ALT
+END
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     TC_VERSION_MAJOR, TC_VERSION_MINOR, TC_VERSION_PATCH, 0
+PRODUCTVERSION  TC_VERSION_MAJOR, TC_VERSION_MINOR, TC_VERSION_PATCH, 0
+FILEOS          VOS__WINDOWS32
+FILETYPE        VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "The Tachyon contributors"
+            VALUE "FileDescription",  "Tachyon web browser"
+            VALUE "FileVersion",      TC_VERSION
+            VALUE "InternalName",     "tachyon"
+            VALUE "LegalCopyright",   "GNU General Public License v3"
+            VALUE "OriginalFilename", "TACHYON.EXE"
+            VALUE "ProductName",      "Tachyon"
+            VALUE "ProductVersion",   TC_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END

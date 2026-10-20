@@ -1,0 +1,81 @@
+# Functions that do not exist on Windows 95, with what to use instead.
+# kernel32
+InterlockedCompareExchange             # Windows 98/NT4. Use __sync_val_compare_and_swap (inline lock cmpxchg, i486+)
+InterlockedCompareExchangePointer      # Windows 98/NT4. Use __sync_val_compare_and_swap
+InterlockedExchangeAdd                 # Windows 98/NT4. Use __sync_fetch_and_add
+IsDebuggerPresent                      # Windows 98/NT4. Load it with GetProcAddress if needed
+TryEnterCriticalSection                # NT only
+InitializeCriticalSectionAndSpinCount  # Windows 98/NT4 SP3. Use InitializeCriticalSection
+SwitchToThread                         # NT only. Use Sleep(0)
+SignalObjectAndWait                    # NT only
+QueueUserAPC                           # Windows 98/NT. Use events
+GetFileAttributesExA                   # Windows 98/NT4. Use GetFileAttributesA and GetFileSize
+GetFileAttributesExW                   # Windows 98/NT4
+GetFileSizeEx                          # Windows 2000. Use GetFileSize
+SetFilePointerEx                       # Windows 2000. Use SetFilePointer
+GetLongPathNameA                       # Windows 98
+GetTickCount64                         # Vista. Use GetTickCount and handle the 49.7-day wrap
+GetSystemTimePreciseAsFileTime         # Windows 8. Use GetSystemTimeAsFileTime
+InitOnceExecuteOnce                    # Vista. Use a compare-and-swap guard
+InitializeConditionVariable            # Vista. Build condition variables from semaphores
+SleepConditionVariableCS               # Vista
+WakeConditionVariable                  # Vista
+WakeAllConditionVariable               # Vista
+InitializeSRWLock                      # Vista. Use a critical section
+AcquireSRWLockExclusive                # Vista
+ReleaseSRWLockExclusive                # Vista
+CreateWaitableTimerA                   # Windows 98. Use SetTimer or timeouts
+FlsAlloc                               # Vista. Use TlsAlloc
+GetNativeSystemInfo                    # XP. Use GetSystemInfo
+IsProcessorFeaturePresent              # NT only. Use CPUID
+AttachConsole                          # XP
+# Random numbers
+CryptAcquireContextA                   # CryptoAPI needs OSR2/IE 3.02: load advapi32 functions at runtime
+CryptGenRandom                         # Load at runtime and fall back to Tachyon's own entropy pool
+CryptReleaseContext                    # Load at runtime
+SystemFunction036                      # RtlGenRandom, Windows XP
+BCryptGenRandom                        # Vista
+# Networking (Winsock 2 / newer)
+getaddrinfo                            # Windows XP (ws2_32). Use gethostbyname from wsock32
+freeaddrinfo                           # Windows XP
+getnameinfo                            # Windows XP
+inet_pton                              # Vista. Parse addresses ourselves
+inet_ntop                              # Vista
+WSAPoll                                # Vista. Use select
+# user32
+TrackMouseEvent                        # Windows 98/NT4. Use SetCapture and WM_MOUSEMOVE
+AnimateWindow                          # Windows 98
+MonitorFromWindow                      # Windows 98. Windows 95 has one monitor: use GetSystemMetrics
+MonitorFromPoint                       # Windows 98
+GetMonitorInfoA                        # Windows 98
+SetLayeredWindowAttributes             # Windows 2000
+UpdateLayeredWindow                    # Windows 2000
+SendInput                              # Windows 98/NT4 SP3
+# gdi32 and msimg32
+AlphaBlend                             # msimg32 (Windows 98). Blend in Tachyon's own compositor
+TransparentBlt                         # msimg32 (Windows 98)
+GradientFill                           # msimg32 (Windows 98). Draw gradients in the compositor
+SetDCBrushColor                        # Windows 2000
+SetDCPenColor                          # Windows 2000
+MaskBlt                                # NT only
+PlgBlt                                 # NT only
+SetWorldTransform                      # NT only (fails on Windows 95)
+ModifyWorldTransform                   # NT only
+# comctl32 4.70+ and shell32 4.71+
+InitCommonControlsEx                   # comctl32 4.70 (IE3). Use InitCommonControls
+_TrackMouseEvent                       # comctl32 4.70 (IE3)
+SHGetFolderPathA                       # shell32 5.0. Use SHGetSpecialFolderLocation + SHGetPathFromIDListA
+SHGetSpecialFolderPathA                # shell32 4.71 (IE4). Use SHGetSpecialFolderLocation + SHGetPathFromIDListA
+# msvcrt.dll newer than VC6
+_vsnprintf_s                           # msvcr80+ secure CRT. Use vsnprintf (MinGW's own, linked statically)
+_snprintf_s                            # msvcr80+. Use snprintf
+vsnprintf_s                            # msvcr80+. Use vsnprintf
+_aligned_malloc                        # msvcrt 7.0+. Over-allocate and align by hand
+_aligned_free                          # msvcrt 7.0+
+_fseeki64                              # msvcr80+. Use fseek (files over 2 GB are not a Win95 concern)
+_ftelli64                              # msvcr80+. Use ftell
+_time64                                # msvcrt 7.0+. Use time (32-bit time_t)
+_gmtime64                              # msvcrt 7.0+. Use gmtime
+_localtime64                           # msvcrt 7.0+. Use localtime
+_mktime64                              # msvcrt 7.0+. Use mktime
+__iob_func                             # msvcrt 7.0+. Use _iob

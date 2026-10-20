@@ -1,0 +1,19 @@
+# W (Unicode) functions that genuinely work on Windows 95. Every other W
+# function exported by kernel32/user32/gdi32 is a stub that fails with
+# ERROR_CALL_NOT_IMPLEMENTED. Source: Microsoft's documentation for the
+# Microsoft Layer for Unicode, which lists the APIs Win9x implements natively.
+EnumResourceLanguagesW
+EnumResourceNamesW
+EnumResourceTypesW
+ExtTextOutW
+FindResourceExW
+FindResourceW
+GetCharWidthW
+GetCommandLineW
+GetTextExtentExPointW
+GetTextExtentPoint32W
+GetTextExtentPointW
+lstrlenW
+MessageBoxExW
+MessageBoxW
+TextOutW

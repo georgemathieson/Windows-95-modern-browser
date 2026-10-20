@@ -1,0 +1,18 @@
+# Functions exported by SHELL32.DLL (version 4.00) on Windows 95 (RTM, 4.00.950) that Tachyon may use.
+# Hand-curated and deliberately conservative: add a function only once you are
+# sure Windows 95 has it, and verify with tools/win95check/dump_exports.py.
+DragAcceptFiles
+DragFinish
+DragQueryFileA
+ExtractIconA
+SHAddToRecentDocs
+SHBrowseForFolderA
+SHChangeNotify
+SHFileOperationA
+SHGetFileInfoA
+SHGetMalloc
+SHGetPathFromIDListA
+SHGetSpecialFolderLocation
+ShellExecuteA
+ShellExecuteExA
+Shell_NotifyIconA

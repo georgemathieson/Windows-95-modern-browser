@@ -1,0 +1,36 @@
+#include "tc_test.h"
+
+#include "tc_version.h"
+
+int tc_test_checks;
+int tc_test_failures;
+static const char *current_test;
+
+void tc_test_fail(const char *file, int line, const char *what)
+{
+    tc_test_failures++;
+    printf("FAIL %s (%s:%d): %s\n", current_test, file, line, what);
+}
+
+void tc_test_run(const char *name, void (*fn)(void))
+{
+    int before = tc_test_failures;
+    current_test = name;
+    fn();
+    if (tc_test_failures == before)
+        printf("ok   %s\n", name);
+}
+
+void tc_suite_buf(void);
+void tc_suite_fixup(void);
+void tc_suite_surface(void);
+
+int main(void)
+{
+    printf("%s %s unit tests\n", TC_NAME, TC_VERSION);
+    tc_suite_buf();
+    tc_suite_fixup();
+    tc_suite_surface();
+    printf("%d checks, %d failed\n", tc_test_checks, tc_test_failures);
+    return tc_test_failures ? 1 : 0;
+}
