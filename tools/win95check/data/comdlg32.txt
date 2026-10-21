@@ -1,0 +1,13 @@
+# Functions exported by COMDLG32.DLL on Windows 95 (RTM, 4.00.950) that Tachyon may use.
+# Hand-curated and deliberately conservative: add a function only once you are
+# sure Windows 95 has it, and verify with tools/win95check/dump_exports.py.
+ChooseColorA
+ChooseFontA
+CommDlgExtendedError
+FindTextA
+GetFileTitleA
+GetOpenFileNameA
+GetSaveFileNameA
+PageSetupDlgA
+PrintDlgA
+ReplaceTextA

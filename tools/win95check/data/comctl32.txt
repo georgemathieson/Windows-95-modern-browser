@@ -1,0 +1,33 @@
+# Functions exported by COMCTL32.DLL (version 4.00) on Windows 95 (RTM, 4.00.950) that Tachyon may use.
+# Hand-curated and deliberately conservative: add a function only once you are
+# sure Windows 95 has it, and verify with tools/win95check/dump_exports.py.
+CreateMappedBitmap
+CreatePropertySheetPageA
+CreateStatusWindowA
+CreateToolbarEx
+CreateUpDownControl
+DestroyPropertySheetPage
+DrawStatusTextA
+GetEffectiveClientRect
+ImageList_Add
+ImageList_AddMasked
+ImageList_BeginDrag
+ImageList_Create
+ImageList_Destroy
+ImageList_DragEnter
+ImageList_DragLeave
+ImageList_DragMove
+ImageList_Draw
+ImageList_DrawEx
+ImageList_EndDrag
+ImageList_GetIcon
+ImageList_GetIconSize
+ImageList_GetImageCount
+ImageList_LoadImageA
+ImageList_Remove
+ImageList_ReplaceIcon
+ImageList_SetBkColor
+InitCommonControls
+MenuHelp
+PropertySheetA
+ShowHideMenuCtl

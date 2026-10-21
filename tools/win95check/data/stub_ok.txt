@@ -1,0 +1,2 @@
+# W stubs we import knowingly. Each entry needs a reason why failure is fine.
+GetModuleHandleW  # MinGW-w64's *_s fallbacks probe msvcrt.dll with it; when it fails they use their own code

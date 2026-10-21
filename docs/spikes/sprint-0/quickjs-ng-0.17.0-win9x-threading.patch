@@ -1,0 +1,149 @@
+--- a/cutils.h	2026-10-20 21:02:16.271089416 +0000
++++ b/cutils.h	2026-10-20 21:04:43.510590658 +0000
+@@ -646,7 +646,21 @@
+ 
+ #define JS_HAVE_THREADS 1
+ 
+-#if defined(_WIN32)
++#if defined(_WIN32) && defined(JS_WIN9X)
++/* Windows 95 has no INIT_ONCE or CONDITION_VARIABLE (Vista+): build them from
++   semaphores and critical sections instead. */
++typedef struct { volatile LONG state; } js_once_t;
++#define JS_ONCE_INIT { 0 }
++typedef CRITICAL_SECTION js_mutex_t;
++typedef struct {
++    CRITICAL_SECTION lock;
++    int waiting;
++    int signals;
++    HANDLE wait_sem;
++    HANDLE wait_done;
++} js_cond_t;
++typedef HANDLE js_thread_t;
++#elif defined(_WIN32)
+ #define JS_ONCE_INIT INIT_ONCE_STATIC_INIT
+ typedef INIT_ONCE js_once_t;
+ typedef CRITICAL_SECTION js_mutex_t;
+@@ -1739,7 +1753,23 @@
+ /*--- Cross-platform threading APIs. ----*/
+ 
+ #if JS_HAVE_THREADS
+-#if defined(_WIN32)
++#if defined(_WIN32) && defined(JS_WIN9X)
++typedef void (*js__once_cb)(void);
++
++static inline void js_once(js_once_t *guard, js__once_cb callback) {
++    /* 0 = not run, 1 = running, 2 = done. lock cmpxchg is i486+, inline. */
++    if (guard->state == 2)
++        return;
++    if (__sync_val_compare_and_swap(&guard->state, 0, 1) == 0) {
++        callback();
++        __sync_synchronize();
++        guard->state = 2;
++        return;
++    }
++    while (guard->state != 2)
++        Sleep(0);
++}
++#elif defined(_WIN32)
+ typedef void (*js__once_cb)(void);
+ 
+ typedef struct {
+@@ -1759,6 +1789,8 @@
+     InitOnceExecuteOnce(guard, js__once_inner, (void*) &data, NULL);
+ }
+ 
++#endif
++#if defined(_WIN32)
+ static inline void js_mutex_init(js_mutex_t *mutex) {
+     InitializeCriticalSection(mutex);
+ }
+@@ -1775,6 +1807,80 @@
+     LeaveCriticalSection(mutex);
+ }
+ 
++#if defined(JS_WIN9X)
++/* Semaphore-based condition variable (the classic SDL generic algorithm). */
++static inline void js_cond_init(js_cond_t *cond) {
++    InitializeCriticalSection(&cond->lock);
++    cond->waiting = 0;
++    cond->signals = 0;
++    cond->wait_sem = CreateSemaphoreA(NULL, 0, 0x7fffffff, NULL);
++    cond->wait_done = CreateSemaphoreA(NULL, 0, 0x7fffffff, NULL);
++    if (!cond->wait_sem || !cond->wait_done)
++        abort();
++}
++
++static inline void js_cond_destroy(js_cond_t *cond) {
++    CloseHandle(cond->wait_sem);
++    CloseHandle(cond->wait_done);
++    DeleteCriticalSection(&cond->lock);
++}
++
++static inline void js_cond_signal(js_cond_t *cond) {
++    EnterCriticalSection(&cond->lock);
++    if (cond->waiting > cond->signals) {
++        cond->signals++;
++        ReleaseSemaphore(cond->wait_sem, 1, NULL);
++        LeaveCriticalSection(&cond->lock);
++        WaitForSingleObject(cond->wait_done, INFINITE);
++    } else {
++        LeaveCriticalSection(&cond->lock);
++    }
++}
++
++static inline void js_cond_broadcast(js_cond_t *cond) {
++    EnterCriticalSection(&cond->lock);
++    if (cond->waiting > cond->signals) {
++        int i, n = cond->waiting - cond->signals;
++        cond->signals = cond->waiting;
++        ReleaseSemaphore(cond->wait_sem, n, NULL);
++        LeaveCriticalSection(&cond->lock);
++        for (i = 0; i < n; i++)
++            WaitForSingleObject(cond->wait_done, INFINITE);
++    } else {
++        LeaveCriticalSection(&cond->lock);
++    }
++}
++
++static inline int js__cond_wait_ms(js_cond_t *cond, js_mutex_t *mutex, DWORD ms) {
++    DWORD r;
++    EnterCriticalSection(&cond->lock);
++    cond->waiting++;
++    LeaveCriticalSection(&cond->lock);
++    LeaveCriticalSection(mutex);
++    r = WaitForSingleObject(cond->wait_sem, ms);
++    EnterCriticalSection(&cond->lock);
++    if (cond->signals > 0) {
++        /* Timed out while a signal was in flight: consume it. */
++        if (r != WAIT_OBJECT_0)
++            WaitForSingleObject(cond->wait_sem, INFINITE);
++        ReleaseSemaphore(cond->wait_done, 1, NULL);
++        cond->signals--;
++        r = WAIT_OBJECT_0;
++    }
++    cond->waiting--;
++    LeaveCriticalSection(&cond->lock);
++    EnterCriticalSection(mutex);
++    return r == WAIT_OBJECT_0 ? 0 : -1;
++}
++
++static inline void js_cond_wait(js_cond_t *cond, js_mutex_t *mutex) {
++    js__cond_wait_ms(cond, mutex, INFINITE);
++}
++
++static inline int js_cond_timedwait(js_cond_t *cond, js_mutex_t *mutex, uint64_t timeout) {
++    return js__cond_wait_ms(cond, mutex, (DWORD)(timeout / 1e6));
++}
++#else
+ static inline void js_cond_init(js_cond_t *cond) {
+     InitializeConditionVariable(cond);
+ }
+@@ -1805,6 +1911,8 @@
+     return -1;
+ }
+ 
++#endif
++
+ static inline int js_thread_create(js_thread_t *thrd, void (*start)(void *), void *arg,
+                      int flags)
+ {
