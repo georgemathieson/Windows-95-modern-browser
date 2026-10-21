@@ -19,9 +19,19 @@ int64_t tc_time_unix(void)
     return (int64_t)((t - FILETIME_UNIX_EPOCH) / 10000000ULL);
 }
 
+/* GetTickCount only moves every 55 ms on Windows 95 (the PC's 18.2 Hz timer),
+   too coarse to time a page. The performance counter runs off the timer
+   chip at 1.19 MHz there; machines without one fall back. */
 uint32_t tc_time_ms(void)
 {
-    return GetTickCount();
+    static LARGE_INTEGER freq; /* zero until first use; racing threads store the same value */
+    LARGE_INTEGER now;
+
+    if (freq.QuadPart == 0 && !QueryPerformanceFrequency(&freq))
+        freq.QuadPart = -1;
+    if (freq.QuadPart <= 0 || !QueryPerformanceCounter(&now))
+        return GetTickCount();
+    return (uint32_t)(now.QuadPart / freq.QuadPart * 1000 + now.QuadPart % freq.QuadPart * 1000 / freq.QuadPart);
 }
 
 /* ---- Threads ---- */

@@ -44,7 +44,7 @@ does not remember anything between sessions; this board does.
 - [x] Tree construction: every insertion mode, the adoption agency algorithm, foster parenting, templates, SVG and MathML, the new `<select>` parsing, fragment parsing: **web-platform-tests tree construction 3,890 of 3,898** (the other 8 need `<selectedcontent>` mirroring, moved to Sprint 6; 6 cases that need scripts are skipped)
 - [x] DOM in a per-document arena: document, doctype, element, text, comment, processing instruction, template contents
 - [x] The browser parses pages on the worker thread and shows a DOM tree view; the window title comes from the DOM; the source view uses the page's encoding
-- [ ] `FETCH.EXE --dom` (done, with an integration test); CI parses the real sites
+- [x] `FETCH.EXE --dom`, with an integration test; CI parses the real sites (all nine, from example.com to BBC News and Yahoo! Japan)
 - [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
 - [ ] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo)
 - [ ] Carried over from Sprint 1: George loads `https://example.com` on Windows 95 and reports the About box's "Randomness" line and the status bar timings
@@ -173,8 +173,9 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Read the current HTML Standard before writing the parser, which mattered: since 2025, `<?target data?>` makes processing instruction nodes, `<select>` lost its own insertion modes (the customizable `<select>` work), and `<select>` became a scope boundary. html5lib-tests moved its tree-construction tests to web-platform-tests.
 - The tokenizer passed all 7,049 html5lib tokenizer cases on its first run. The tree builder passed 3,882 of 3,898 on its first; the rest came down to `<nobr>` ignoring the adoption agency's "any other end tag" result, forms inside a `<template>` fragment, and a carriage return that the test generator's own newline translation had eaten.
 - Integration found a latent Sprint 1 bug: `tc_buf_reserve` didn't NUL-terminate a newly allocated buffer.
-- Fuzzing (libFuzzer with AddressSanitizer and UBSan, seeded from the test suites): over 13 million inputs locally with no crash (still running at the time of writing); CI now fuzzes for three minutes on every push.
-- Parsing GitHub's 572 KB home page takes 7 ms and 2.1 MB on the build machine.
+- Fuzzing (libFuzzer with AddressSanitizer and UBSan, seeded from the test suites): 19.4 million inputs locally (three workers for 30 minutes, after a short run) with no crash, leak or undefined behaviour; CI now fuzzes for three minutes on every push.
+- CI's real-sites job parsed all nine sites under Wine at the first attempt, Wikipedia's Windows 95 article (4,421 elements) and BBC News (4,899) among them; Hacker News and NeverSSL come out in quirks mode, as they should with no doctype.
+- Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
 - Sprint 1's Windows 95 demo is still to do, together with this sprint's.
 
 ### Sprint 1: Hello, HTTPS (2026-10-21, merged as PR #2)
