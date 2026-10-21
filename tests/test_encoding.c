@@ -103,6 +103,19 @@ static void test_mime(void)
     TC_CHECK_INT(tc_mime_parse("/html", &m), TC_ERR_INVALID);
     TC_CHECK_INT(tc_mime_parse("te xt/html", &m), TC_ERR_INVALID);
     TC_CHECK_INT(tc_mime_parse("", &m), TC_ERR_INVALID);
+
+    TC_CHECK(tc_mime_sniff_html("  <!DOCTYPE html>", 17));
+    TC_CHECK(tc_mime_sniff_html("<P>hello", 8));
+    TC_CHECK(tc_mime_sniff_html("<!-- x", 6));
+    TC_CHECK(!tc_mime_sniff_html("<pre>", 5));
+    TC_CHECK(!tc_mime_sniff_html("<html", 5)); /* no terminator yet */
+    TC_CHECK(!tc_mime_sniff_html("{\"json\": 1}", 11));
+    TC_CHECK(tc_mime_wants_html("text/html", "", 0, &m));
+    TC_CHECK(tc_mime_wants_html("application/xhtml+xml; charset=utf-8", "", 0, &m));
+    TC_CHECK_STR(m.charset, "utf-8");
+    TC_CHECK(!tc_mime_wants_html("text/plain", "<html>", 6, &m));
+    TC_CHECK(tc_mime_wants_html(NULL, "<html>", 6, &m));
+    TC_CHECK(tc_mime_wants_html("bogus", "<html>", 6, &m));
 }
 
 static tc_encoding meta(const char *content)

@@ -219,6 +219,11 @@ void tc_dom_append(tc_node *parent, tc_node *node)
     tc_dom_insert_before(parent, node, NULL);
 }
 
+const tc_element *tc_dom_fragment_host(const tc_node *fragment)
+{
+    return fragment->type == TC_NODE_FRAGMENT ? ((const tc_fragment *)fragment)->host : NULL;
+}
+
 const char *tc_dom_get_attr(const tc_element *el, const char *name)
 {
     uint32_t i;

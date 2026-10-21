@@ -141,3 +141,39 @@ int tc_mime_is_html(const tc_mime *m)
 {
     return strcmp(m->essence, "text/html") == 0;
 }
+
+int tc_mime_sniff_html(const void *data, size_t len)
+{
+    static const char *const patterns[] = {
+        "<!doctype html", "<html", "<head", "<script", "<iframe", "<h1", "<div", "<font", "<table", "<a",
+        "<style", "<title", "<b", "<body", "<br", "<p", "<!--"
+    };
+    const unsigned char *p = data;
+    size_t i, start = 0;
+
+    while (start < len && (p[start] == 0x09 || p[start] == 0x0A || p[start] == 0x0C || p[start] == 0x0D ||
+                           p[start] == 0x20))
+        start++;
+    for (i = 0; i < TC_ARRAY_LEN(patterns); i++) {
+        size_t n = strlen(patterns[i]), k;
+        if (len - start < n + 1)
+            continue;
+        for (k = 0; k < n; k++) {
+            unsigned char c = p[start + k];
+            if ((c >= 'A' && c <= 'Z' ? c + 32 : c) != (unsigned char)patterns[i][k])
+                break;
+        }
+        /* A tag-terminating byte must follow (space or '>'). */
+        if (k == n && (p[start + n] == 0x20 || p[start + n] == 0x3E))
+            return 1;
+    }
+    return 0;
+}
+
+int tc_mime_wants_html(const char *content_type, const void *body, size_t len, tc_mime *m)
+{
+    if (content_type && tc_mime_parse(content_type, m) == TC_OK)
+        return tc_mime_is_html(m) || strcmp(m->essence, "application/xhtml+xml") == 0;
+    m->essence[0] = m->charset[0] = '\0';
+    return tc_mime_sniff_html(body, len);
+}

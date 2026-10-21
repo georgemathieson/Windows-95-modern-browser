@@ -125,6 +125,9 @@ void tc_dom_remove(tc_node *node);
 #define tc_dom_is(n, ns_, tag_) ((n) && (n)->type == TC_NODE_ELEMENT && (n)->ns == (ns_) && (n)->tag == (tag_))
 #define tc_dom_is_html(n, tag_) tc_dom_is(n, TC_NS_HTML, tag_)
 
+/* For a template's contents (a fragment), the template; otherwise NULL. */
+const tc_element *tc_dom_fragment_host(const tc_node *fragment);
+
 /* An attribute's value (attributes in no namespace only), or NULL. */
 const char *tc_dom_get_attr(const tc_element *el, const char *name);
 

@@ -39,6 +39,7 @@ typedef struct shell {
     int history_pos; /* index of the current page, -1 when empty */
 
     tw_load *load;   /* the page being loaded, NULL when idle */
+    int show_source; /* show pages' source instead of their document tree */
     const char *proxy_host;
     uint16_t proxy_port;
 } shell;
@@ -236,6 +237,10 @@ static void on_progress(shell *sh, tw_load *load)
 
     if (load != sh->load)
         return; /* an abandoned load */
+    if (load->parsing) {
+        set_status(sh, "Reading the page...");
+        return;
+    }
     switch (load->phase) {
     case TC_FETCH_RESOLVING:
         snprintf(text, sizeof text, "Looking up %s...", load->host);
@@ -265,64 +270,19 @@ static void on_progress(shell *sh, tw_load *load)
     set_status(sh, text);
 }
 
-static int starts_nocase(const char *s, const char *prefix)
+/* The document's title for the window caption, or NULL if it has none. */
+static const char *document_title(const tc_document *doc, char *out, int size)
 {
-    for (; *prefix; s++, prefix++)
-        if ((*s >= 'A' && *s <= 'Z' ? *s + 32 : *s) != *prefix)
-            return 0;
-    return 1;
-}
+    tc_buf title;
+    const char *result = NULL;
 
-/* The page's <title>, found naively until Tachyon parses HTML (Sprint 2). */
-static int find_title(const tc_buf *body, char *out, int size)
-{
-    const char *s = tc_buf_cstr(body), *start = NULL, *end = NULL;
-    size_t i, n = TC_MIN(body->len, (size_t)65536);
-    char collapsed[600];
-    size_t c = 0;
-
-    for (i = 0; i + 7 < n && !start; i++)
-        if (s[i] == '<' && starts_nocase(s + i + 1, "title") && (s[i + 6] == '>' || s[i + 6] == ' '))
-            start = memchr(s + i, '>', n - i);
-    if (!start)
-        return 0;
-    start++;
-    for (i = (size_t)(start - s); i + 7 < n && !end; i++)
-        if (s[i] == '<' && starts_nocase(s + i, "</title"))
-            end = s + i;
-    if (!end)
-        return 0;
-    /* Collapse whitespace; decode the commonest character references. */
-    while (start < end && c < sizeof collapsed - 1) {
-        static const struct { const char *ref; char ch; } refs[] = {
-            { "&amp;", '&' }, { "&lt;", '<' }, { "&gt;", '>' }, { "&quot;", '"' }, { "&#39;", '\'' },
-        };
-        size_t r;
-        int replaced = 0;
-        if (*start == ' ' || *start == '\n' || *start == '\r' || *start == '\t') {
-            if (c && collapsed[c - 1] != ' ')
-                collapsed[c++] = ' ';
-            start++;
-            continue;
-        }
-        for (r = 0; r < TC_ARRAY_LEN(refs); r++) {
-            size_t len = strlen(refs[r].ref);
-            if ((size_t)(end - start) >= len && memcmp(start, refs[r].ref, len) == 0) {
-                collapsed[c++] = refs[r].ch;
-                start += len;
-                replaced = 1;
-                break;
-            }
-        }
-        if (!replaced)
-            collapsed[c++] = *start++;
+    tc_buf_init(&title);
+    if (tc_document_title(doc, &title) == TC_OK && title.len) {
+        utf8_to_ansi(title.data, title.len, out, size);
+        result = out[0] ? out : NULL;
     }
-    while (c && collapsed[c - 1] == ' ')
-        c--;
-    if (!c)
-        return 0;
-    utf8_to_ansi(collapsed, c, out, size);
-    return out[0] != '\0';
+    tc_buf_free(&title);
+    return result;
 }
 
 static void show_error(shell *sh, tw_load *load)
@@ -394,6 +354,7 @@ static void show_response(shell *sh, tw_load *load)
     char title[300], status[300];
     tc_buf head;
     size_t i;
+    int n;
 
     /* A redirect lands somewhere else: that is the address now. */
     if (r->url && strcmp(r->url, sh->history[sh->history_pos]) != 0) {
@@ -410,19 +371,27 @@ static void show_response(shell *sh, tw_load *load)
     for (i = 0; i < r->headers.len; i++)
         tc_buf_printf(&head, "%s: %s\n", r->headers.items[i].name, r->headers.items[i].value);
     tc_buf_append_char(&head, '\n');
-    tw_view_show_source(sh->view, sh->history[sh->history_pos], tc_buf_cstr(&head), head.len,
-                        tc_buf_cstr(&r->body), r->body.len);
+    if (load->is_html) {
+        const char *doc_title = document_title(load->page.doc, title, sizeof title);
+        set_title(sh, doc_title ? doc_title : sh->history[sh->history_pos]);
+        tw_view_set_show_source(sh->view, sh->show_source);
+        tw_view_show_document(sh->view, sh->history[sh->history_pos], tc_buf_cstr(&head), head.len, &load->page);
+    } else {
+        set_title(sh, sh->history[sh->history_pos]);
+        tw_view_show_source(sh->view, sh->history[sh->history_pos], tc_buf_cstr(&head), head.len,
+                            tc_buf_cstr(&r->body), r->body.len);
+    }
     tc_buf_free(&head);
 
-    set_title(sh, find_title(&r->body, title, sizeof title) ? title : sh->history[sh->history_pos]);
+    n = snprintf(status, sizeof status, "Done: %u KB in %u.%u s", (unsigned)(load->body_len / 1024),
+                 (unsigned)(r->elapsed_ms / 1000), (unsigned)(r->elapsed_ms % 1000 / 100));
+    if (load->is_html)
+        n += snprintf(status + n, sizeof status - (size_t)n, ", read in %u.%u s", (unsigned)(load->parse_ms / 1000),
+                      (unsigned)(load->parse_ms % 1000 / 100));
     if (r->tls.version[0])
-        snprintf(status, sizeof status, "Done: %u KB in %u.%u s. Secure: %s, %s", (unsigned)(r->body.len / 1024),
-                 (unsigned)(r->elapsed_ms / 1000), (unsigned)(r->elapsed_ms % 1000 / 100), r->tls.version,
-                 r->tls.cipher);
+        snprintf(status + n, sizeof status - (size_t)n, ". Secure: %s, %s", r->tls.version, r->tls.cipher);
     else
-        snprintf(status, sizeof status, "Done: %u KB in %u.%u s. Not secure (plain HTTP)",
-                 (unsigned)(r->body.len / 1024), (unsigned)(r->elapsed_ms / 1000),
-                 (unsigned)(r->elapsed_ms % 1000 / 100));
+        snprintf(status + n, sizeof status - (size_t)n, ". Not secure (plain HTTP)");
     set_status(sh, status);
 }
 
@@ -474,6 +443,16 @@ static void edit_command(UINT message, WPARAM wp, LPARAM lp)
         SendMessageA(focus, message, wp, lp);
 }
 
+/* Pages show their document tree or their source. */
+static void set_show_source(shell *sh, int show_source)
+{
+    sh->show_source = show_source;
+    CheckMenuRadioItem(GetMenu(sh->hwnd), IDM_VIEW_TREE, IDM_VIEW_SOURCE, show_source ? IDM_VIEW_SOURCE : IDM_VIEW_TREE,
+                       MF_BYCOMMAND);
+    if (!tw_view_set_show_source(sh->view, show_source))
+        set_status(sh, show_source ? "Pages will show their source." : "Pages will show their document tree.");
+}
+
 static void on_command(shell *sh, int id)
 {
     switch (id) {
@@ -506,6 +485,13 @@ static void on_command(shell *sh, int id)
     case IDM_VIEW_RELOAD:
         if (sh->history_pos >= 0)
             show_current(sh);
+        break;
+    case IDM_VIEW_TREE:
+        set_show_source(sh, 0);
+        break;
+    case IDM_VIEW_SOURCE:
+        /* The menu item picks the source; Ctrl+U toggles. */
+        set_show_source(sh, GetKeyState(VK_CONTROL) < 0 ? !sh->show_source : 1);
         break;
     case IDM_GO_BACK:
         if (sh->history_pos > 0) {
@@ -714,6 +700,7 @@ HWND tw_shell_create(HINSTANCE instance, const tw_shell_options *opts)
     }
 
     check_clock(sh);
+    CheckMenuRadioItem(GetMenu(hwnd), IDM_VIEW_TREE, IDM_VIEW_SOURCE, IDM_VIEW_TREE, MF_BYCOMMAND);
     if (!opts->start_url || !navigate_typed(sh, opts->start_url))
         navigate(sh, TW_HOME_URL);
 

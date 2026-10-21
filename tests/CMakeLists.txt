@@ -37,6 +37,7 @@ add_executable(tachyon_tests
   ${CMAKE_CURRENT_BINARY_DIR}/html_cases.c
   test_main.c
   test_buf.c
+  test_dom.c
   test_encoding.c
   test_fixup.c
   test_html.c

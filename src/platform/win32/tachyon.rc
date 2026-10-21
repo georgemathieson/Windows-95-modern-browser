@@ -24,6 +24,9 @@ BEGIN
     BEGIN
         MENUITEM "&Stop\tEsc",                  IDM_VIEW_STOP
         MENUITEM "&Reload\tF5",                 IDM_VIEW_RELOAD
+        MENUITEM SEPARATOR
+        MENUITEM "Document &Tree",              IDM_VIEW_TREE
+        MENUITEM "Page &Source\tCtrl+U",        IDM_VIEW_SOURCE
     END
     POPUP "&Go"
     BEGIN
@@ -43,6 +46,7 @@ BEGIN
     VK_F6,      IDM_FILE_OPEN,      VIRTKEY
     VK_ESCAPE,  IDM_VIEW_STOP,      VIRTKEY
     VK_F5,      IDM_VIEW_RELOAD,    VIRTKEY
+    "U",        IDM_VIEW_SOURCE,    VIRTKEY, CONTROL
     VK_LEFT,    IDM_GO_BACK,        VIRTKEY, ALT
     VK_RIGHT,   IDM_GO_FORWARD,     VIRTKEY, ALT
     VK_HOME,    IDM_GO_HOME,        VIRTKEY, ALT

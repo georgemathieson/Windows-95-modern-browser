@@ -6,7 +6,9 @@
       "displayName": "Host (Linux) build for fast tests",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/host",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "win95",
@@ -14,15 +16,50 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/win95",
       "toolchainFile": "${sourceDir}/cmake/toolchain-win95.cmake",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "fuzz",
+      "displayName": "Host build with libFuzzer and sanitizers (clang)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/fuzz",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "TACHYON_FUZZ": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "host", "configurePreset": "host" },
-    { "name": "win95", "configurePreset": "win95" }
+    {
+      "name": "host",
+      "configurePreset": "host"
+    },
+    {
+      "name": "win95",
+      "configurePreset": "win95"
+    },
+    {
+      "name": "fuzz",
+      "configurePreset": "fuzz"
+    }
   ],
   "testPresets": [
-    { "name": "host", "configurePreset": "host", "output": { "outputOnFailure": true } },
-    { "name": "win95", "configurePreset": "win95", "output": { "outputOnFailure": true } }
+    {
+      "name": "host",
+      "configurePreset": "host",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "win95",
+      "configurePreset": "win95",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

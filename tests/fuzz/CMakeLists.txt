@@ -1,0 +1,4 @@
+# libFuzzer targets (configure with the "fuzz" preset; see tools/fuzz.sh).
+add_executable(fuzz_html fuzz_html.c)
+target_link_libraries(fuzz_html PRIVATE tachyon_core)
+target_link_options(fuzz_html PRIVATE -fsanitize=fuzzer)

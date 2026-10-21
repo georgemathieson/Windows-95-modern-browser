@@ -56,6 +56,7 @@ add_library(tachyon_core STATIC
   tc_http.c
   tc_inflate.c
   tc_mime.c
+  tc_outline.c
   tc_sha256.c
   tc_surface.c
   tc_tags.c
