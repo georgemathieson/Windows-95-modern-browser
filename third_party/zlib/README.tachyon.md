@@ -9,9 +9,8 @@
 
 Only the decompression side is here: `adler32.c`, `crc32.c`, `inffast.c`,
 `inflate.c`, `inftrees.c`, `zutil.c` and their headers (plus `gzguts.h`,
-which `zutil.c` includes). Tachyon never
-compresses anything, so `deflate.c`, the `gz*` file functions and the rest
-are left out.
+which `zutil.c` includes). Tachyon never compresses anything, so
+`deflate.c`, the `gz*` file functions and the rest are left out.
 
 **No upstream file is modified.** `CMakeLists.txt` is Tachyon's own.
 

@@ -23,7 +23,7 @@ only when George asks.
 # One-time setup in a fresh Ubuntu 24.04 container
 dpkg --add-architecture i386 && apt-get update
 apt-get install -y cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb xauth \
-    zip mtools genisoimage x11-apps imagemagick
+    zip unzip mtools genisoimage x11-apps imagemagick xdotool
 
 cmake --preset host  && cmake --build --preset host  && ctest --preset host
 cmake --preset win95 && cmake --build --preset win95 && xvfb-run -a ctest --preset win95
@@ -48,6 +48,29 @@ wineserver -k
 
 Wine lacks Windows 95's fonts (Arial, Times New Roman), so text looks a
 little different from the real thing.
+
+To drive the UI, `xdotool` can type and press keys in the Xvfb display
+(`xdotool key ctrl+l; xdotool type example.com; xdotool key Return`). For
+local pages, `python3 tests/server/fetch_tests.py --certs tests/server/certs
+--serve` runs the HTTP, HTTPS and proxy test servers and prints their
+addresses; start TACHYON.EXE with `--cacert tests/server/certs/ca.pem`.
+`faketime` doesn't work with Wine (its clock comes from wineserver): to test
+the wrong-clock warning, configure a build with `-DTACHYON_BUILD_UNIX=` set
+in the future.
+
+### Networking from Claude's container
+
+Outbound connections go through an egress gateway that re-signs TLS with its
+own CA, and only some hosts are allowed. So Tachyon (correctly) refuses real
+sites here unless told `--cacert /root/.ccr/ca-bundle.crt`, and most hosts
+are blocked anyway. CI's real-sites job tests against real certificates.
+
+### Windows-only code paths
+
+The Linux build exercises the core but not `src/platform/win32`. Always run
+`xvfb-run -a ctest --preset win95` after touching Windows code: the
+integration tests run FETCH.EXE under Wine and have already caught a Winsock
+bug the Linux build couldn't.
 
 ## Windows 95 rules
 
@@ -86,9 +109,11 @@ The build enforces these with `tools/win95check`; don't work around it.
 
 ## Third-party code
 
-From Sprint 1, vendored code lives in `third_party/<name>/` with a note of the
-upstream version, commit and every local patch. The Windows 95 patches and
-configuration worked out in Sprint 0 are in `docs/spikes/sprint-0/`.
+Vendored code lives in `third_party/<name>/` with a `README.tachyon.md`
+giving the upstream version, commit, what was left out and every local
+change (so far: none; configuration lives in separate files). Never edit
+upstream files without recording it there. The QuickJS-ng Windows 9x patch
+worked out in Sprint 0 is in `docs/spikes/sprint-0/`, ready for Sprint 5.
 
 This container blocks direct downloads from GitHub, but public repositories
 can be cloned: call the `add_repo` tool, then `git clone`.
