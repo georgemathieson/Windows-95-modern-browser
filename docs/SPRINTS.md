@@ -46,7 +46,8 @@ does not remember anything between sessions; this board does.
 - [x] The browser parses pages on the worker thread and shows a DOM tree view; the window title comes from the DOM; the source view uses the page's encoding
 - [x] `FETCH.EXE --dom`, with an integration test; CI parses the real sites (all nine, from example.com to BBC News and Yahoo! Japan)
 - [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
-- [ ] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo)
+- [ ] Pulled forward from Sprint 9 at George's request: a GitHub release, Tachyon 0.2.0, with a Windows 95 installer (decision 25)
+- [ ] **George sees a page's DOM tree in Tachyon on Windows 95**, installed from the release (the demo)
 - [ ] Carried over from Sprint 1: George loads `https://example.com` on Windows 95 and reports the About box's "Randomness" line and the status bar timings
 
 ## Upcoming sprints
@@ -94,13 +95,13 @@ Positioning, floats, stacking contexts, overflow, flexbox, grid, media queries, 
 ### Sprint 9: Installer and first public alpha
 
 **Goal:** install Tachyon from a floppy or CD on a fresh Windows 95 and browse.
-An installer and uninstaller in the Windows 95 wizard style, Start menu shortcuts, settings (home page, proxy, extra certificate authorities), bookmarks, crash logs and a GitHub release. Needs the period-correct toolchain from the backlog first.
+Grow the test builds' installer (NSIS, since Sprint 2: decision 25) into the alpha's, or replace it: the Windows 95 wizard style, installing from floppies, settings (home page, proxy, extra certificate authorities), bookmarks, crash logs and the first release that isn't a pre-release. Needs the period-correct toolchain from the backlog first.
 
 ## Backlog
 
 Unscheduled. Pull items into a sprint when they serve its goal.
 
-- **Period-correct toolchain (before the alpha).** Ubuntu's MinGW-w64 runtime (libgcc, libmingwex, startup code) is compiled for the Pentium Pro and uses `cmov`, so today's builds crash at startup on an original Pentium, a Pentium MMX or an AMD K6. Build GCC's runtime and the MinGW-w64 CRT with `-march=i586`, cache the toolchain in CI, then set `TACHYON_ISA_FLOOR=i586`. Could be a short sprint of its own.
+- **Period-correct toolchain (before the alpha).** Ubuntu's MinGW-w64 runtime (libgcc, libmingwex, startup code) is compiled for the Pentium Pro and uses `cmov`, so today's builds crash at startup on an original Pentium, a Pentium MMX or an AMD K6. Build GCC's runtime and the MinGW-w64 CRT with `-march=i586`, cache the toolchain in CI, then set `TACHYON_ISA_FLOOR=i586`. Ubuntu's prebuilt NSIS installer stub uses `cmov` too, so it needs rebuilding the same way. Could be a short sprint of its own.
 - **Measure TLS on period hardware:** handshake times for RSA and ECDSA sites on an emulated Pentium II (86Box), and the entropy pool's strength without CryptoAPI.
 - **Full UTS #46** (internationalised domain names): the mapping table, NFC, and the bidi and joiner rules. 31 web-platform-tests host cases wait on it.
 - Verify the hand-curated export lists against real Windows 95 DLLs (`EXPORTS.EXE`).
@@ -153,6 +154,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 22 | Nesting depth capped at 400: deeper elements are attached to the 400th | Browsers cap it too (Chromium at 512), and later stages must not overflow Windows 95's 1 MB stack | Sprint 2 |
 | 23 | A `<meta charset>` found while parsing restarts the parse in the new encoding | The whole page is in memory, so parsing it again is simple and always correct; switching decoders mid-stream isn't | Sprint 2 |
 | 24 | The document tree view hides whitespace-only text nodes | Every DOM inspector does; `FETCH --dom` shows them all | Sprint 2 |
+| 25 | Test builds become GitHub pre-releases with an installer, pulled forward from Sprint 9. CI publishes one when a `v<version>` tag is pushed. The installer is built with NSIS 3: an ANSI build with the classic interface and no plug-ins | George tests on Windows 95 from a release. NSIS's ANSI installers still support Windows 95, and its stub passes win95check once OLE32 and eight functions Windows 95 has are listed (three are NT security stubs that NSIS only calls before restarting the PC). Whether the alpha writes its own installer is Sprint 9's call | Sprint 2 |
 
 ## Risks
 
@@ -160,10 +162,10 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - **TLS speed on a Pentium.** Untested on period hardware so far: measure handshakes in 86Box (backlog).
 - **Entropy without CryptoAPI.** On an original Windows 95 install, CPU jitter is the only counted source. Its strength on real hardware is unmeasured; the About box reports it.
 - **Wine is not Windows 95.** It hides missing APIs and behaviour differences. The export lists, the import checker and George's VM tests each sprint are the safety net. (Sprint 1's Winsock bug only showed up because the integration tests also run under Wine.)
-- **Hand-curated export lists.** kernel32 and crtdll come from Wine's 1998 reconstruction of Windows 95; the rest are from knowledge. Verify with real DLLs.
+- **Hand-curated export lists.** kernel32 and crtdll come from Wine's 1998 reconstruction of Windows 95; the rest are from knowledge. Verify with real DLLs. The installer added OLE32 and eight functions (decision 25); George's `EXPORTS.TXT` will confirm them.
 - **Clocks.** Certificate checks need the right date, and VM clocks are often wrong. Tachyon warns, but can't fix it.
 - **Scope.** "Full HTML5" is unbounded; the conformance suites and the site list keep us honest.
-- **The floppy is nearly full.** TACHYON.EXE is 1.1 MB stripped, leaving 249 KB on the 1.44 MB floppy, and Sprint 3's fonts won't fit. The CD image and zip already carry everything; the installer (Sprint 9) will need several floppies or a CD.
+- **The floppy is nearly full.** TACHYON.EXE is 1.1 MB stripped, leaving 249 KB on the 1.44 MB floppy, and Sprint 3's fonts won't fit. The installer compresses everything into 639 KB, so a floppy with SETUP.EXE on it is the way out for a while; the CD image already carries it.
 - **Parsing speed on a Pentium.** GitHub's 572 KB home page parses in 7 ms on the build machine; a 1990s CPU may be a hundred times slower. George's "read in" timings will tell.
 
 ## Sprint history
@@ -176,6 +178,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Fuzzing (libFuzzer with AddressSanitizer and UBSan, seeded from the test suites): 19.4 million inputs locally (three workers for 30 minutes, after a short run) with no crash, leak or undefined behaviour; CI now fuzzes for three minutes on every push.
 - CI's real-sites job parsed all nine sites under Wine at the first attempt, Wikipedia's Windows 95 article (4,421 elements) and BBC News (4,899) among them; Hacker News and NeverSSL come out in quirks mode, as they should with no doctype.
 - Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
+- George asked for a release with an installer to test from, so the basics of Sprint 9 came forward (decision 25). `SETUP.EXE` is 639 KB with everything in it. It installs to `C:\Program Files\Tachyon` with Start menu and desktop shortcuts and an Add/Remove Programs entry. CI installs and uninstalls it under Wine on every push, and publishes a pre-release when a version tag is pushed.
 - Sprint 1's Windows 95 demo is still to do, together with this sprint's.
 
 ### Sprint 1: Hello, HTTPS (2026-10-21, merged as PR #2)

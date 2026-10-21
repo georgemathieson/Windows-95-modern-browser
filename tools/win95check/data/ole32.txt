@@ -1,0 +1,8 @@
+# Functions exported by OLE32.DLL (OLE 2) on Windows 95 that Tachyon may use.
+# Hand-curated and deliberately conservative: add a function only once you are
+# sure Windows 95 has it, and verify with tools/win95check/dump_exports.py.
+CoCreateInstance
+CoTaskMemFree
+IIDFromString
+OleInitialize
+OleUninitialize

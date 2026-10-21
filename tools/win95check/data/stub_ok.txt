@@ -1,2 +1,6 @@
-# W stubs we import knowingly. Each entry needs a reason why failure is fine.
-GetModuleHandleW  # MinGW-w64's *_s fallbacks probe msvcrt.dll with it; when it fails they use their own code
+# Stubs we import knowingly: W functions, and functions marked "stub" in
+# data/<dll>.txt. Each entry needs a reason why failure is fine.
+AdjustTokenPrivileges  # NSIS installers (SETUP.EXE) ask NT for the right to restart; Windows 95 needs none
+GetModuleHandleW       # MinGW-w64's *_s fallbacks probe msvcrt.dll with it; when it fails they use their own code
+LookupPrivilegeValueA  # NSIS installers, as AdjustTokenPrivileges
+OpenProcessToken       # NSIS installers, as AdjustTokenPrivileges

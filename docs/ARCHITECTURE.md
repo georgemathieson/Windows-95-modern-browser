@@ -136,6 +136,7 @@ tools/win95check/                   import and instruction checker, export lists
 tools/win95exports/                 EXPORTS.EXE: dumps real Windows 95 exports
 tools/gen_*.py                      build-time generators (icon, root certificates, encodings,
                                     character references, URL and HTML tests, fuzz corpus)
-tools/package.sh                    zip, floppy image and ISO for testers
+tools/package.sh                    installer, zip, floppy image and ISO for testers
+tools/installer/                    SETUP.EXE's NSIS script; tools/test_installer.sh tests it
 docs/                               sprint board, testing guide, spikes
 ```

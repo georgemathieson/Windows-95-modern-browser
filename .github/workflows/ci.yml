@@ -30,7 +30,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build mingw-w64 wine wine32:i386 xvfb xauth zip mtools genisoimage
+            ninja-build mingw-w64 wine wine32:i386 xvfb xauth zip mtools genisoimage nsis
       - name: Prepare Wine
         run: wineboot --init && wineserver --wait
       - run: cmake --preset win95 -DTACHYON_WERROR=ON
@@ -38,12 +38,15 @@ jobs:
         run: cmake --build --preset win95
       - name: Test under Wine
         run: xvfb-run -a ctest --preset win95
-      - name: Package
+      - name: Package (the installer must pass win95check too)
         run: tools/package.sh build/win95 dist
+      - name: Install and uninstall under Wine
+        run: xvfb-run -a tools/test_installer.sh dist/tachyon-*-win95-setup.exe
       - uses: actions/upload-artifact@v4
         with:
           name: tachyon-win95
           path: |
+            dist/*.exe
             dist/*.zip
             dist/*.img
             dist/*.iso
@@ -103,3 +106,36 @@ jobs:
             if [ "$ok" = 0 ]; then echo "::error::FETCH.EXE could not load $url"; failed=1; fi
           done
           exit $failed
+
+  # Pushing a tag v<version> publishes that build as a GitHub pre-release,
+  # once the unit and Wine tests have passed. The version must match
+  # CMakeLists.txt, and docs/releases/<version>.md holds the notes (its first
+  # line is the title).
+  release:
+    name: Publish the GitHub release (version tags only)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host, win95]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tachyon-win95
+          path: dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          notes=docs/releases/$version.md
+          if [ ! -f "dist/tachyon-$version-win95-setup.exe" ]; then
+            echo "::error::$GITHUB_REF_NAME doesn't match the version built: $(ls dist)"; exit 1
+          fi
+          if [ ! -f "$notes" ]; then echo "::error::$notes is missing"; exit 1; fi
+          tail -n +3 "$notes" > notes.md
+          gh release create "$GITHUB_REF_NAME" --verify-tag --prerelease \
+            --title "$(sed -n '1s/^# //p' "$notes")" --notes-file notes.md \
+            dist/tachyon-$version-win95-setup.exe dist/tachyon-$version-win95.zip \
+            dist/tachyon-$version-win95.iso dist/tachyon-$version-win95.img

@@ -1,8 +1,8 @@
 /* EXPORTS.EXE: record which functions this copy of Windows exports.
  *
- * Run it on Windows 95. It loads the system DLLs Tachyon uses, walks their
- * export tables in memory and writes EXPORTS.TXT next to itself (or to
- * C:\EXPORTS.TXT if that fails). tools/win95check/dump_exports.py compares
+ * Run it on Windows 95. It loads the system DLLs Tachyon and its installer
+ * use, walks their export tables in memory and writes EXPORTS.TXT next to
+ * itself (or to C:\EXPORTS.TXT if that fails). tools/win95check/dump_exports.py compares
  * the file with win95check's lists. Only names are recorded.
  *
  *   EXPORTS.EXE [/q]      /q: no message box when done */
@@ -12,8 +12,8 @@
 
 static const char *const dlls[] = {
     "KERNEL32.DLL", "USER32.DLL", "GDI32.DLL", "ADVAPI32.DLL", "COMCTL32.DLL",
-    "COMDLG32.DLL", "SHELL32.DLL", "WSOCK32.DLL", "CRTDLL.DLL", "MSVCRT.DLL",
-    "WS2_32.DLL",
+    "COMDLG32.DLL", "SHELL32.DLL", "OLE32.DLL", "WSOCK32.DLL", "CRTDLL.DLL",
+    "MSVCRT.DLL", "WS2_32.DLL",
 };
 
 static int write_exports(FILE *f, const char *name)

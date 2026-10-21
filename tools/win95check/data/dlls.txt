@@ -6,6 +6,7 @@ advapi32.dll  # always present (registry). CryptoAPI arrived with OSR2/IE 3.02: 
 comctl32.dll  # 4.00 on Windows 95 RTM. 4.70+ functions (IE3) must be loaded at runtime
 comdlg32.dll  # always present
 shell32.dll   # always present (4.00)
+ole32.dll     # OLE 2, always present. So far only the installer uses it (for shortcuts)
 wsock32.dll   # Winsock 1.1, always present. ws2_32.dll is a separate Winsock 2 download: not allowed
 crtdll.dll    # always present: the default C runtime (TACHYON_CRT=crtdll)
 msvcrt.dll    # NOT on Windows 95 RTM (comes with OSR2.5, IE4, Office). Only with TACHYON_CRT=msvcrt

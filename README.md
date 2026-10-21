@@ -40,9 +40,12 @@ The plan, the current sprint and every decision so far are on the
 
 ## Trying it
 
-Every push builds a zip, a 1.44 MB floppy image and a CD-ROM image on
-GitHub Actions: open the latest **CI** run and download the `tachyon-win95`
-artifact. Windows 95 needs TCP/IP set up and the right date and time.
+Download the installer for Windows 95 from
+[Releases](https://github.com/georgemathieson/Windows-95-modern-browser/releases).
+Every sprint publishes a test build there, with a CD-ROM image, a floppy
+image and a zip. Every push also builds them on GitHub Actions: open the
+latest **CI** run and download the `tachyon-win95` artifact. Windows 95
+needs TCP/IP set up and the right date and time.
 [Testing on Windows 95](docs/TESTING-ON-WIN95.md) explains how to get it
 into a virtual machine and what to report.
 
@@ -55,6 +58,7 @@ Xvfb. On Ubuntu 24.04:
 ```sh
 sudo dpkg --add-architecture i386 && sudo apt-get update
 sudo apt-get install cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb
+sudo apt-get install zip mtools genisoimage nsis    # for packaging
 ```
 
 ```sh
@@ -66,8 +70,9 @@ cmake --preset host && cmake --build --preset host && ctest --preset host
 cmake --preset win95 && cmake --build --preset win95
 xvfb-run -a ctest --preset win95       # unit, integration and GUI smoke tests under Wine
 
-# Package for testers: dist/*.zip, *.img (floppy), *.iso
+# Package for testers: dist/*-setup.exe (installer), *.zip, *.img (floppy), *.iso
 tools/package.sh build/win95 dist
+tools/test_installer.sh dist/tachyon-*-win95-setup.exe    # install and uninstall under Wine
 
 # Fuzz the HTML parser for 10 minutes (needs clang; see tools/fuzz.sh)
 tools/fuzz.sh 600

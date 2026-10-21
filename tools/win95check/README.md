@@ -8,8 +8,8 @@ fails if anything wouldn't work on Windows 95:
 - a DLL not in `data/dlls.txt`
 - a function not in `data/<dll>.txt`, or in `data/forbidden.txt` (which says
   what to use instead)
-- a W (Unicode) function that Windows 95 only stubs, unless it's in
-  `data/stub_ok.txt` with a reason
+- a W (Unicode) function that Windows 95 only stubs, or a function marked
+  `# stub` in its list, unless it's in `data/stub_ok.txt` with a reason
 - a subsystem or OS version above 4.0, or a non-i386 image
 - with `--objdump`, any instruction newer than the CPU floor (`--isa i586`
   for the original Pentium, `i686` for the Pentium Pro), and any MMX or SSE
