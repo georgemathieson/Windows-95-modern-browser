@@ -47,8 +47,8 @@ does not remember anything between sessions; this board does.
 - [x] `FETCH.EXE --dom`, with an integration test; CI parses the real sites (all nine, from example.com to BBC News and Yahoo! Japan)
 - [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
 - [ ] Pulled forward from Sprint 9 at George's request: a GitHub release, Tachyon 0.2.0, with a Windows 95 installer (decision 25)
-- [ ] **George sees a page's DOM tree in Tachyon on Windows 95**, installed from the release (the demo)
-- [ ] Carried over from Sprint 1: George loads `https://example.com` on Windows 95 and reports the About box's "Randomness" line and the status bar timings
+- [x] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo): Google's, on Windows 95 C with a Pentium Pro and 128 MB, installed with `SETUP.EXE` from a CI build
+- [x] Carried over from Sprint 1: HTTPS works on Windows 95, and the About box's "Randomness" line reads 256 of 256 bits. The status bar timings weren't reported; they move to the backlog's TLS measurement
 
 ## Upcoming sprints
 
@@ -102,7 +102,7 @@ Grow the test builds' installer (NSIS, since Sprint 2: decision 25) into the alp
 Unscheduled. Pull items into a sprint when they serve its goal.
 
 - **Period-correct toolchain (before the alpha).** Ubuntu's MinGW-w64 runtime (libgcc, libmingwex, startup code) is compiled for the Pentium Pro and uses `cmov`, so today's builds crash at startup on an original Pentium, a Pentium MMX or an AMD K6. Build GCC's runtime and the MinGW-w64 CRT with `-march=i586`, cache the toolchain in CI, then set `TACHYON_ISA_FLOOR=i586`. Ubuntu's prebuilt NSIS installer stub uses `cmov` too, so it needs rebuilding the same way. Could be a short sprint of its own.
-- **Measure TLS on period hardware:** handshake times for RSA and ECDSA sites on an emulated Pentium II (86Box), and the entropy pool's strength without CryptoAPI.
+- **Measure TLS on period hardware:** handshake times for RSA and ECDSA sites on an emulated Pentium II (86Box), the status bar's "Done" and "read in" timings on George's machine, and the entropy pool's strength without CryptoAPI.
 - **Full UTS #46** (internationalised domain names): the mapping table, NFC, and the bidi and joiner rules. 31 web-platform-tests host cases wait on it.
 - Verify the hand-curated export lists against real Windows 95 DLLs (`EXPORTS.EXE`).
 - TLS session resumption, to make repeat visits to a site faster.
@@ -160,7 +160,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 - **Hardware speed.** QuickJS is an interpreter and period CPUs are slow; heavy sites may be unusable. Measure from Sprint 5 and be honest about it.
 - **TLS speed on a Pentium.** Untested on period hardware so far: measure handshakes in 86Box (backlog).
-- **Entropy without CryptoAPI.** On an original Windows 95 install, CPU jitter is the only counted source. Its strength on real hardware is unmeasured; the About box reports it.
+- **Entropy without CryptoAPI.** On an original Windows 95 install, CPU jitter is the only counted source. Its strength there is unmeasured; the About box reports it. On Windows 95 C, whose Internet Explorer 4 brings CryptoAPI, the pool gets its full 256 bits.
 - **Wine is not Windows 95.** It hides missing APIs and behaviour differences. The export lists, the import checker and George's VM tests each sprint are the safety net. (Sprint 1's Winsock bug only showed up because the integration tests also run under Wine.)
 - **Hand-curated export lists.** kernel32 and crtdll come from Wine's 1998 reconstruction of Windows 95; the rest are from knowledge. Verify with real DLLs. The installer added OLE32 and eight functions (decision 25); George's `EXPORTS.TXT` will confirm them.
 - **Clocks.** Certificate checks need the right date, and VM clocks are often wrong. Tachyon warns, but can't fix it.
@@ -180,7 +180,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
 - George asked for a release with an installer to test from, so the basics of Sprint 9 came forward (decision 25). `SETUP.EXE` is 639 KB with everything in it. It installs to `C:\Program Files\Tachyon` with Start menu and desktop shortcuts and an Add/Remove Programs entry. CI installs and uninstalls it under Wine on every push, and publishes a pre-release when a version tag is pushed.
 - The parser and browser were merged as PR #3 before the installer was done. The installer and releases followed in a pull request of their own, so the sprint stays open until George has run the demo from the first release.
-- Sprint 1's Windows 95 demo is still to do, together with this sprint's.
+- **The first run on Windows 95:** George installed Tachyon with `SETUP.EXE` and loaded Google over HTTPS on Windows 95 C (4.00.950 C) with a Pentium Pro and 128 MB. That also covers Sprint 1's demo. The About box reported 256 of 256 bits of randomness. The installer starting at all shows that its imports exist on Windows 95 C; the original release is still unchecked.
 
 ### Sprint 1: Hello, HTTPS (2026-10-21, merged as PR #2)
 
