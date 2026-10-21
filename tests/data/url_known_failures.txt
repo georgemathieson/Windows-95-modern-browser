@@ -1,0 +1,37 @@
+# Web-platform-tests URL cases Tachyon is known to get wrong.
+# Each line: a JSON array [input, base], then "# reason".
+# tests/test_url.c fails if one of these starts passing, so keep it current.
+
+# Internationalised domain names that need full UTS #46 processing (its
+# mapping table, NFC, and the bidi and joiner rules). Backlog item.
+["toascii", "\u064aa"]  # needs full UTS #46
+["toascii", "\u0dc1\u0dca\u200d\u0dbb\u0dd3"]  # needs full UTS #46
+["toascii", "\u0646\u0627\u0645\u0647\u200c\u0627\u06cc"]  # needs full UTS #46
+["toascii", "=\u0338"]  # needs full UTS #46
+["toascii", "<\u0338"]  # needs full UTS #46
+["toascii", ">\u0338"]  # needs full UTS #46
+["toascii", "=\u00ad\u0338"]  # needs full UTS #46
+["toascii", "<\u00ad\u0338"]  # needs full UTS #46
+["toascii", ">\u00ad\u0338"]  # needs full UTS #46
+["toascii", "\u0dc1\u0dca\u200d\u0dbb\u0dd3.com"]  # needs full UTS #46
+["toascii", "\u0646\u0627\u0645\u0647\u200c\u0627\u06cc.com"]  # needs full UTS #46
+["toascii", "www\u2025lookout.net"]  # needs full UTS #46
+["toascii", "www.lookout.net\u2a7480"]  # needs full UTS #46
+["toascii", "\u1680lookout.net"]  # needs full UTS #46
+["toascii", "look\u06ddout.net"]  # needs full UTS #46
+["toascii", "look\u180eout.net"]  # needs full UTS #46
+["toascii", "look\u2ff0out.net"]  # needs full UTS #46
+["toascii", "look\u0341out.net"]  # needs full UTS #46
+["toascii", "look\u202eout.net"]  # needs full UTS #46
+["toascii", "look\u206bout.net"]  # needs full UTS #46
+["toascii", "look\udb40\udc01out.net"]  # needs full UTS #46
+["toascii", "look\udb40\udc20out.net"]  # needs full UTS #46
+["toascii", "look\u05beout.net"]  # needs full UTS #46
+["toascii", "\u0378.net"]  # needs full UTS #46
+["toascii", "\u04c0.com"]  # needs full UTS #46
+["toascii", "\ud87e\udc68.com"]  # needs full UTS #46
+["toascii", "\u2183.com"]  # needs full UTS #46
+["toascii", "\u09dc.com"]  # needs full UTS #46
+["toascii", "\u1e9e.com"]  # needs full UTS #46
+["toascii", "\u1e9e.foo.com"]  # needs full UTS #46
+["toascii", "foo\u0300.bar.com"]  # needs full UTS #46

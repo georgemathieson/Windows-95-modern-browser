@@ -28,7 +28,25 @@
 enum tc_err {
     TC_OK = 0,
     TC_ERR_NOMEM = -1,
-    TC_ERR_INVALID = -2
+    TC_ERR_INVALID = -2,
+    TC_ERR_TIMEOUT = -3,
+    TC_ERR_CANCELLED = -4,
+    TC_ERR_URL = -5,          /* not a valid URL */
+    TC_ERR_UNSUPPORTED = -6,  /* e.g. a URL scheme Tachyon can't load */
+    TC_ERR_DNS = -7,          /* host name not found */
+    TC_ERR_CONNECT = -8,      /* connection refused or unreachable */
+    TC_ERR_NET = -9,          /* connection failed after it was made */
+    TC_ERR_CLOSED = -10,      /* the server closed the connection early */
+    TC_ERR_TLS = -11,         /* TLS handshake or record failure */
+    TC_ERR_CERT = -12,        /* the server's certificate isn't trusted */
+    TC_ERR_PROTOCOL = -13,    /* the server broke the HTTP rules */
+    TC_ERR_REDIRECTS = -14,   /* too many redirects */
+    TC_ERR_TOO_LARGE = -15,   /* response bigger than Tachyon accepts */
+    TC_ERR_DECODE = -16,      /* bad gzip/deflate data */
+    TC_ERR_PROXY = -17        /* the proxy refused or failed */
 };
+
+/* A short English description of an error, e.g. "connection refused". */
+const char *tc_err_text(int err);
 
 #endif

@@ -18,9 +18,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 if(WIN32)
   enable_language(RC)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   # Oldest CPU the shipped code must run on. Our own code is always compiled
   # for i586 (the original Pentium), but MinGW-w64's prebuilt runtime uses
@@ -71,9 +72,13 @@ endfunction()
 
 enable_testing()
 
+add_subdirectory(third_party/mbedtls)
+add_subdirectory(third_party/zlib)
 add_subdirectory(src/core)
 if(WIN32)
   add_subdirectory(src/platform/win32)
   add_subdirectory(tools/win95exports)
+else()
+  add_subdirectory(src/platform/posix)
 endif()
 add_subdirectory(tests)
