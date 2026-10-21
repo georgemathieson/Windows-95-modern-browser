@@ -170,7 +170,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 ## Sprint history
 
-### Sprint 2: HTML5 parser and DOM (started 2026-10-21)
+### Sprint 2: HTML5 parser and DOM (started 2026-10-21; the parser merged as PR #3)
 
 - Read the current HTML Standard before writing the parser, which mattered: since 2025, `<?target data?>` makes processing instruction nodes, `<select>` lost its own insertion modes (the customizable `<select>` work), and `<select>` became a scope boundary. html5lib-tests moved its tree-construction tests to web-platform-tests.
 - The tokenizer passed all 7,049 html5lib tokenizer cases on its first run. The tree builder passed 3,882 of 3,898 on its first; the rest came down to `<nobr>` ignoring the adoption agency's "any other end tag" result, forms inside a `<template>` fragment, and a carriage return that the test generator's own newline translation had eaten.
@@ -179,6 +179,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - CI's real-sites job parsed all nine sites under Wine at the first attempt, Wikipedia's Windows 95 article (4,421 elements) and BBC News (4,899) among them; Hacker News and NeverSSL come out in quirks mode, as they should with no doctype.
 - Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
 - George asked for a release with an installer to test from, so the basics of Sprint 9 came forward (decision 25). `SETUP.EXE` is 639 KB with everything in it. It installs to `C:\Program Files\Tachyon` with Start menu and desktop shortcuts and an Add/Remove Programs entry. CI installs and uninstalls it under Wine on every push, and publishes a pre-release when a version tag is pushed.
+- The parser and browser were merged as PR #3 before the installer was done. The installer and releases followed in a pull request of their own, so the sprint stays open until George has run the demo from the first release.
 - Sprint 1's Windows 95 demo is still to do, together with this sprint's.
 
 ### Sprint 1: Hello, HTTPS (2026-10-21, merged as PR #2)
