@@ -61,7 +61,8 @@ static int wait_ready(SOCKET s, enum wait_for what, uint32_t timeout_ms, const v
         FD_ZERO(&ready);
         FD_ZERO(&failed);
         FD_SET(s, &ready);
-        FD_SET(s, &failed);
+        if (what == WAIT_CONNECT)
+            FD_SET(s, &failed);
         tv.tv_sec = 0;
         tv.tv_usec = (long)slice * 1000;
         n = select(0, what == WAIT_READ ? &ready : NULL, what == WAIT_READ ? NULL : &ready,

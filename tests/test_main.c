@@ -23,6 +23,7 @@ void tc_test_run(const char *name, void (*fn)(void))
 
 void tc_suite_buf(void);
 void tc_suite_fixup(void);
+void tc_suite_net(void);
 void tc_suite_platform(void);
 void tc_suite_sha256(void);
 void tc_suite_surface(void);
@@ -33,6 +34,7 @@ int main(void)
     printf("%s %s unit tests\n", TC_NAME, TC_VERSION);
     tc_suite_buf();
     tc_suite_fixup();
+    tc_suite_net();
     tc_suite_platform();
     tc_suite_sha256();
     tc_suite_surface();

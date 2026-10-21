@@ -18,6 +18,7 @@ add_executable(tachyon_tests
   test_main.c
   test_buf.c
   test_fixup.c
+  test_net.c
   test_platform.c
   test_sha256.c
   test_surface.c

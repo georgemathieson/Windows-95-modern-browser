@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(tachyon VERSION 0.0.1 LANGUAGES C)
+project(tachyon VERSION 0.1.0 LANGUAGES C)
 
-set(TACHYON_SPRINT 0)
-set(TACHYON_SPRINT_NAME "Foundations")
+set(TACHYON_SPRINT 1)
+set(TACHYON_SPRINT_NAME "Hello, HTTPS")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -81,4 +81,5 @@ if(WIN32)
 else()
   add_subdirectory(src/platform/posix)
 endif()
+add_subdirectory(tools/fetch)
 add_subdirectory(tests)
