@@ -48,7 +48,7 @@ does not remember anything between sessions; this board does.
 - [x] UI: loading state, working Stop, progress in the status bar, scrollable page source, error pages
 - [x] `FETCH.EXE` and 23 integration tests against a local test server, natively and under Wine
 - [x] HTTP proxy support (`--proxy`), pulled in from the backlog (decision 14)
-- [ ] CI's real-sites job is green: example.com, en.wikipedia.org, news.ycombinator.com and others, trusting only Mozilla's roots
+- [x] CI's real-sites job is green: example.com, en.wikipedia.org, news.ycombinator.com and others, trusting only Mozilla's roots
 - [ ] **George loads `https://example.com` in Tachyon on Windows 95** (the demo; covers Sprint 0's demo too)
 - [ ] George reports the About box's "Randomness" line and the status bar timings from Windows 95
 
@@ -172,7 +172,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Vendored Mbed TLS 4.1.1 LTS, zlib 1.3.2 and Mozilla's root store; wrote the platform layer, entropy pool, URL parser, HTTP client, TLS glue, loader, `FETCH.EXE` and the browser integration.
 - The URL parser passed all 896 web-platform-tests URL cases after a handful of fixes; the WPT data itself settled two spec details (`^` is encoded in paths; ASCII `xn--` domains are only lowercased).
 - The integration tests found a Winsock bug that the Linux build couldn't: `select()`'s exception set was checked after read and write waits, so every load failed with "connection refused" on Windows. Fixed before it reached a tester.
-- Real sites from Claude's container go through an egress gateway that re-signs TLS. Tachyon correctly refused it, and loaded pypi.org and npm when told to trust the gateway's CA. CI checks real sites with Mozilla's roots alone.
+- Real sites from Claude's container go through an egress gateway that re-signs TLS. Tachyon correctly refused it, and loaded pypi.org and npm when told to trust the gateway's CA. CI checks real sites with Mozilla's roots alone: on its first run, the packaged `FETCH.EXE` under Wine loaded all seven (example.com, Wikipedia, Hacker News, Google, GitHub, Cloudflare and plain-HTTP neverssl.com) at the first attempt, all six HTTPS sites over TLS 1.3.
 - Sprint 0 was merged without its Windows 95 demo; that test is folded into this sprint's.
 
 ### Sprint 0: Foundations (2026-10-20, merged as PR #1)
