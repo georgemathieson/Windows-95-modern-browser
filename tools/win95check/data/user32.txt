@@ -15,6 +15,7 @@ CharPrevA
 CharToOemA
 CharUpperA
 CharUpperBuffA
+CheckDlgButton
 CheckMenuItem
 CheckMenuRadioItem
 ChildWindowFromPoint
@@ -61,8 +62,10 @@ EndPaint
 EnumChildWindows
 EnumDisplaySettingsA
 EnumWindows
+ExitWindowsEx
 FillRect
 FindWindowA
+FindWindowExA
 FrameRect
 GetActiveWindow
 GetAsyncKeyState
@@ -169,6 +172,7 @@ ScrollWindow
 ScrollWindowEx
 SendDlgItemMessageA
 SendMessageA
+SendMessageTimeoutA
 SetActiveWindow
 SetCapture
 SetCaretPos

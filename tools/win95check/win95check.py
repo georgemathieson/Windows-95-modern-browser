@@ -9,7 +9,7 @@ data/*.txt:
   dlls.txt        DLLs we may import from, with notes
   <dll>.txt       functions known to be exported by that DLL on Windows 95
   real_w.txt      W functions that actually work on Windows 95
-  stub_ok.txt     W stubs we import knowingly, each with a reason
+  stub_ok.txt     stubs we import knowingly, each with a reason
   forbidden.txt   functions that do not exist on Windows 95, with advice
 
 Every import must be listed, so a new API is always a conscious decision.
@@ -212,12 +212,14 @@ def check(path, objdump=None, isa="i586", list_only=False):
             elif fn not in exports:
                 errors.append("%s: not known to exist on Windows 95. If it does, add it to data/%s.txt"
                               % (where, key.replace(".dll", "")))
-            elif fn.endswith("W") and key != "msvcrt.dll" and fn not in real_w:
+            elif exports[fn].startswith("stub") or (fn.endswith("W") and key != "msvcrt.dll"
+                                                    and fn not in real_w):
                 if fn in stub_ok:
                     warnings.append("%s: stub on Windows 95, accepted: %s" % (where, stub_ok[fn]))
                 else:
-                    errors.append("%s: exported by Windows 95 but always fails there; use the A version"
-                                  " (or justify it in data/stub_ok.txt)" % where)
+                    errors.append("%s: exported by Windows 95 but always fails there; %s"
+                                  " (or justify it in data/stub_ok.txt)"
+                                  % (where, "use the A version" if fn.endswith("W") else "avoid it"))
 
     if objdump:
         errors.extend(check_isa(path, objdump, isa))

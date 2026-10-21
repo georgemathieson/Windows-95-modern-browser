@@ -23,14 +23,28 @@ only when George asks.
 # One-time setup in a fresh Ubuntu 24.04 container
 dpkg --add-architecture i386 && apt-get update
 apt-get install -y cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb xauth \
-    zip unzip mtools genisoimage x11-apps imagemagick xdotool clang libclang-rt-18-dev
+    zip unzip mtools genisoimage nsis x11-apps imagemagick xdotool clang libclang-rt-18-dev
 
 cmake --preset host  && cmake --build --preset host  && ctest --preset host
 cmake --preset win95 && cmake --build --preset win95 && xvfb-run -a ctest --preset win95
 tools/package.sh build/win95 dist
+tools/test_installer.sh dist/tachyon-*-win95-setup.exe
 ```
 
 Use `-DTACHYON_WERROR=ON` before pushing; CI builds with warnings as errors.
+
+### Releases
+
+A tag `v<version>` makes CI publish that build as a GitHub pre-release
+with the installer, CD image, floppy image and zip. The tag must match
+`VERSION` in `CMakeLists.txt`, and `docs/releases/<version>.md` holds the
+notes (its first line is the title). This container can't push tags, so
+George makes them: with `git push`, or by publishing a release with a new
+tag on GitHub's website, which CI then fills in. Prepare a release only
+when George asks for one. The installer is built with NSIS from
+`tools/installer/tachyon.nsi`; keep it ANSI (`Unicode false`) and free of
+plug-ins, so that its only code is NSIS's installer stub, which win95check
+checks.
 
 ### Seeing the UI
 
@@ -45,6 +59,9 @@ DISPLAY=:77 wine build/win95/src/platform/win32/TACHYON.exe & sleep 8
 DISPLAY=:77 xwd -root -silent | convert xwd:- shot.png    # then Read shot.png
 wineserver -k
 ```
+
+With the virtual desktop set, every Wine program needs a display, even
+console ones like FETCH.EXE: run them with `DISPLAY` set or under `xvfb-run`.
 
 Wine lacks Windows 95's fonts (Arial, Times New Roman), so text looks a
 little different from the real thing.
