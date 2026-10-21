@@ -52,6 +52,9 @@ add_library(tachyon_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_entities.c
   tc_arena.c
   tc_buf.c
+  tc_css_color.c
+  tc_css_syntax.c
+  tc_css_values.c
   tc_dom.c
   tc_encoding.c
   tc_entropy.c
@@ -66,6 +69,7 @@ add_library(tachyon_core STATIC
   tc_log.c
   tc_mime.c
   tc_outline.c
+  tc_selector.c
   tc_sha256.c
   tc_surface.c
   tc_tags.c
@@ -79,3 +83,6 @@ target_include_directories(tachyon_core PUBLIC
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib)
+if(NOT WIN32)
+  target_link_libraries(tachyon_core PUBLIC m) # crtdll has the maths functions on Windows
+endif()

@@ -1,0 +1,49 @@
+# css-parsing-tests cases Tachyon gets "wrong" on purpose, each with the reason.
+# A listed case that starts passing fails the run: remove it.
+
+# Today's CSS Syntax only makes <unicode-range-token>s while parsing the
+# unicode-range descriptor; elsewhere "U+10" is an ident and a number.
+component_value_list.json:38  # unicode-range tokens outside unicode-range
+component_value_list.json:39  # unicode-range tokens outside unicode-range
+component_value_list.json:40  # unicode-range tokens outside unicode-range
+component_value_list.json:41  # unicode-range tokens outside unicode-range
+component_value_list.json:42  # unicode-range tokens outside unicode-range
+component_value_list.json:43  # unicode-range tokens outside unicode-range
+component_value_list.json:44  # unicode-range tokens outside unicode-range
+component_value_list.json:45  # unicode-range tokens outside unicode-range
+component_value_list.json:46  # unicode-range tokens outside unicode-range
+
+# The ~= |= ^= $= *= || tokens are gone from today's spec: they are delims.
+component_value_list.json:47  # match tokens removed from CSS Syntax
+component_value_list.json:48  # match tokens removed from CSS Syntax
+
+# CSS Nesting: a block's contents can hold nested style rules, so
+# "@ media screen { ... }" is now a rule, not an invalid declaration.
+declaration_list.json:8  # nested rules (today's "consume a block's contents")
+
+# Today's "parse a declaration" trims whitespace around the value, stops at
+# ';', and has no separate "empty" error.
+one_declaration.json:0  # no "empty" error in today's spec
+one_declaration.json:1  # no "empty" error in today's spec
+one_declaration.json:11  # value whitespace trimmed
+one_declaration.json:12  # stops at ';'
+one_declaration.json:14  # stops at ';'
+one_declaration.json:15  # value whitespace trimmed
+one_declaration.json:16  # value whitespace trimmed
+one_declaration.json:17  # value whitespace trimmed
+one_declaration.json:18  # value whitespace trimmed
+one_declaration.json:19  # value whitespace trimmed
+
+# CSS Color 5: color(--profile ...) needs @color-profile, which Tachyon
+# doesn't support; light-dark() resolves to its light colour when styles are
+# computed rather than being kept as a pair.
+color_functions_5.json:10  # @color-profile spaces
+color_functions_5.json:11  # @color-profile spaces
+color_functions_5.json:12  # @color-profile spaces
+color_functions_5.json:13  # @color-profile spaces
+color_functions_5.json:14  # @color-profile spaces
+color_functions_5.json:15  # @color-profile spaces
+color_functions_5.json:16  # light-dark() pair
+color_functions_5.json:17  # light-dark() pair
+color_functions_5.json:18  # light-dark() pair
+color_functions_5.json:19  # light-dark() pair

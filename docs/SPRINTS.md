@@ -30,43 +30,33 @@ does not remember anything between sessions; this board does.
 | Display | 800×600, 16-bit colour | 640×480, 256 colours |
 | Network | TCP/IP over a network card or Dial-Up Networking, IPv4 | same |
 
-## Current sprint: Sprint 2, HTML5 parser and DOM
+## Current sprint: Sprint 3, First Light
 
-**Goal:** a spec-compliant HTML5 parser building a DOM.
+**Goal:** real pages rendered with CSS, layout and text.
 
-**Demo:** load a page and see its DOM tree (View > Document Tree).
+**Demo:** read a Wikipedia article on Windows 95.
 
 **Definition of done**
 
-- [x] Encodings: UTF-8, UTF-16LE/BE, the 28 legacy single-byte encodings, x-user-defined and replacement, with every WHATWG label (Chinese, Japanese and Korean multi-byte encodings are deferred, decision 18)
-- [x] Encoding sniffing: BOM, HTTP `charset`, the `<meta>` prescan, XML declarations, windows-1252 default; re-parse when a `<meta charset>` disagrees: **html5lib encoding tests 82 of 82**
-- [x] Tokenizer: every state in today's HTML Standard (including processing instructions), all 2,231 named character references, parse error codes: **html5lib tokenizer tests 7,049 of 7,049** (3 of them expect an error code from before processing instructions; listed as known)
-- [x] Tree construction: every insertion mode, the adoption agency algorithm, foster parenting, templates, SVG and MathML, the new `<select>` parsing, fragment parsing: **web-platform-tests tree construction 3,890 of 3,898** (the other 8 need `<selectedcontent>` mirroring, moved to Sprint 6; 6 cases that need scripts are skipped)
-- [x] DOM in a per-document arena: document, doctype, element, text, comment, processing instruction, template contents
-- [x] The browser parses pages on the worker thread and shows a DOM tree view; the window title comes from the DOM; the source view uses the page's encoding
-- [x] `FETCH.EXE --dom`, with an integration test; CI parses the real sites (all nine, from example.com to BBC News and Yahoo! Japan)
-- [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
-- [ ] Pulled forward from Sprint 9 at George's request: a GitHub release, Tachyon 0.2.0, with a Windows 95 installer (decision 25). Ready: George tags `v0.2.0` once PR #4 is merged
-- [x] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo): Google's, on Windows 95 C with a Pentium Pro and 128 MB, installed with `SETUP.EXE` from a CI build
-- [x] Pulled forward from Sprint 9 at George's suggestion: a log, `TACHYON.LOG`, with crash reports (decision 26)
-- [x] Carried over from Sprint 1: HTTPS works on Windows 95, and the About box's "Randomness" line reads 256 of 256 bits. The status bar timings weren't reported; they move to the backlog's TLS measurement
+- [ ] CSS syntax: the tokenizer and parser of today's CSS Syntax Level 3, with `@charset` and BOM handling: **css-parsing-tests** (component values, declarations, rules, stylesheets, An+B, stylesheet bytes) pass, apart from a listed few where the 2021 tests and today's spec differ (decision 28)
+- [ ] Colours: named colours, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`: css-parsing-tests' colour files pass
+- [ ] Selectors Level 3 plus `:is()`, `:where()` and `:not()` with lists; specificity; matching fast enough for Wikipedia (rules bucketed by id, class and tag)
+- [ ] The cascade: the HTML Standard's user-agent stylesheet, `<style>`, `<link rel=stylesheet>`, `@import`, `style` attributes, `!important`, inheritance, `initial`/`inherit`/`unset`, custom properties and `var()`, and media queries for screen width (full media queries stay in Sprint 7)
+- [ ] Computed values for what block and inline layout need: display, box model (margin, border, padding, width, height, min/max, box-sizing), lengths (px, em, rem, ex, ch, %, vw/vh, pt and friends) with `calc()`, colour and background colour, fonts, text (align, indent, decoration, transform, white-space, spacing), vertical-align, visibility, list styles, `::before`/`::after` with string content
+- [ ] Text: Windows 95's own TrueType fonts (Arial, Times New Roman, Courier New and the rest installed) rasterised by stb_truetype into `tc_surface`, with font matching, bold and italic, and a glyph cache (decision 27). GDI text retires from the page view
+- [ ] Layout: the box tree (anonymous boxes, list markers, generated content, `<br>`, `<img>` as a placeholder with its alt text); block layout with auto widths, auto margins and margin collapsing; inline layout with line breaking, white-space handling, text-align and vertical-align; inline-block. Tables, floats and positioning are laid out as blocks until Sprint 7 (decision 29)
+- [ ] Painting: backgrounds, borders (solid, dashed, dotted, double and Windows 95's own inset, outset, groove and ridge), text and its decorations, list markers; only the visible part is painted
+- [ ] The browser shows rendered pages by default (View > Page), with the document tree and source one menu away; scrolling by scroll bar, wheel and keyboard; links show a hand and their address in the status bar, and clicking one follows it (`#fragment` links scroll); window resizing lays the page out again; `about:` pages are HTML
+- [ ] Loading: stylesheets fetched after the page, over kept-alive connections reused per host, with a small in-memory cache (decision 30)
+- [ ] Reference tests: `tachyon-render` lays out and paints a page to PNG on the host; reftests compare a test page with its reference pixel for pixel under ctest, natively and under Wine
+- [ ] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
+- [ ] **George reads a Wikipedia article in Tachyon on Windows 95** (the demo)
+- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release (George tags `v0.2.0` once PR #4 is merged)
 
 ## Upcoming sprints
 
 The goals are firm; the scope lists are drafts and get refined at the start
 of each sprint.
-
-### Sprint 3: First Light
-
-**Goal:** real pages rendered with CSS, layout and text.
-**Demo:** read a Wikipedia article on Windows 95.
-
-- CSS syntax parser, selectors, cascade, inheritance and the UA stylesheet.
-- Box tree; block and inline layout; line breaking.
-- Font rasterising with bundled fonts (stb_truetype or FreeType) into `tc_surface`; GDI text retires from the view.
-- Painting backgrounds, borders and text; scrolling; clicking links; `about:` pages become HTML.
-- Loading stylesheets: HTTP keep-alive and connection reuse, a small cache.
-- Reference tests: render pages to PNG on the host and compare.
 
 ### Sprint 4: Images and fonts
 
@@ -86,7 +76,7 @@ Form controls and submission (GET/POST, urlencoded and multipart), cookies with 
 ### Sprint 7: Modern layout
 
 **Goal:** modern site layouts look right.
-Positioning, floats, stacking contexts, overflow, flexbox, grid, media queries, custom properties, `calc()`, 2D transforms and opacity.
+Positioning, floats, tables, stacking contexts, overflow, flexbox, grid, the rest of media queries, 2D transforms and opacity. (Custom properties, `calc()` and width media queries arrive in Sprint 3, because Wikipedia needs them.)
 
 ### Sprint 8: Web APIs
 
@@ -158,6 +148,10 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 24 | The document tree view hides whitespace-only text nodes | Every DOM inspector does; `FETCH --dom` shows them all | Sprint 2 |
 | 25 | Test builds become GitHub pre-releases with an installer, pulled forward from Sprint 9. CI publishes one when a `v<version>` tag is pushed. The installer is built with NSIS 3: an ANSI build with the classic interface and no plug-ins | George tests on Windows 95 from a release. NSIS's ANSI installers still support Windows 95, and its stub passes win95check once OLE32 and eight functions Windows 95 has are listed (three are NT security stubs that NSIS only calls before restarting the PC). Whether the alpha writes its own installer is Sprint 9's call | Sprint 2 |
 | 26 | A log, `TACHYON.LOG` next to `TACHYON.EXE`, with a crash report appended when Tachyon crashes. Pulled forward from Sprint 9 at George's suggestion | The first crash on real Windows 95 doesn't happen under Wine, and Windows' own dialog shows only registers. The report adds the code addresses on the stack (named from each build's symbols file) and the last 64 log and trace lines, down to the tree rows being drawn. It formats with static buffers and no printf, because a crash can leave little stack. Kept under 48 KB so that Windows 95's Notepad can open it | Sprint 2 |
+| 27 | Text uses the TrueType fonts Windows 95 already has (Arial, Times New Roman, Courier New, and whatever else is installed), rasterised by stb_truetype. Sprint 3 ships no fonts. Host and CI tests use the Liberation fonts, which have the same metrics | They're on every Windows 95 machine, they look right there, and they cost no download, floppy space or licence; stb_truetype is one small public-domain file. Text in other scripts waits for Sprint 4's fallback fonts anyway | Sprint 3 |
+| 28 | CSS parsing follows today's CSS Syntax Level 3. css-parsing-tests (written against the 2021 draft) cases that disagree are listed with the reason, like the HTML parser's | Same approach as decision 19: browsers ship today's spec | Sprint 3 |
+| 29 | Tables, floats and positioned boxes are laid out as ordinary blocks until Sprint 7 | They need layout algorithms of their own; as blocks, Wikipedia's infobox and navigation tables still read top to bottom | Sprint 3 |
+| 30 | HTTP keep-alive and a small in-memory cache, revisiting decision 11 | Pages now load stylesheets, mostly from the same host: a new TLS handshake for each costs seconds on a Pentium | Sprint 3 |
 
 ## Risks
 
@@ -172,6 +166,11 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - **Parsing speed on a Pentium.** GitHub's 572 KB home page parses in 7 ms on the build machine; a 1990s CPU may be a hundred times slower. George's "read in" timings will tell.
 
 ## Sprint history
+
+### Sprint 3: First Light (started 2026-10-21)
+
+- Started on top of Sprint 2's branch, since PR #4 (installer and log) wasn't merged yet.
+- Scope refined: custom properties, `calc()` and width media queries come forward from Sprint 7 because Wikipedia's styles depend on them; tables, floats and positioning stay blocks (decision 29); fonts come from Windows 95 itself (decision 27).
 
 ### Sprint 2: HTML5 parser and DOM (2026-10-21; merged as PR #3, the installer and log in PR #4)
 
