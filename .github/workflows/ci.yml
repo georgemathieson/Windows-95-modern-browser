@@ -98,7 +98,7 @@ jobs:
                      https://www.cloudflare.com/ \
                      https://www.bbc.co.uk/news \
                      https://www.yahoo.co.jp/ \
-                     http://neverssl.com/; do
+                     http://example.com/; do
             ok=0
             for attempt in 1 2 3; do
               if wine TACHYON/FETCH.EXE -q --dom "$url"; then ok=1; break; fi

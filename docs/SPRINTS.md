@@ -46,9 +46,8 @@ does not remember anything between sessions; this board does.
 - [x] The browser parses pages on the worker thread and shows a DOM tree view; the window title comes from the DOM; the source view uses the page's encoding
 - [x] `FETCH.EXE --dom`, with an integration test; CI parses the real sites (all nine, from example.com to BBC News and Yahoo! Japan)
 - [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
-- [ ] Pulled forward from Sprint 9 at George's request: a GitHub release, Tachyon 0.2.0, with a Windows 95 installer (decision 25)
+- [ ] Pulled forward from Sprint 9 at George's request: a GitHub release, Tachyon 0.2.0, with a Windows 95 installer (decision 25). Ready: George tags `v0.2.0` once PR #4 is merged
 - [x] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo): Google's, on Windows 95 C with a Pentium Pro and 128 MB, installed with `SETUP.EXE` from a CI build
-- [ ] Scrolling a big document tree (Wikipedia's) doesn't crash on Windows 95. George's test found an invalid page fault in KERNEL32 that Wine doesn't show
 - [x] Pulled forward from Sprint 9 at George's suggestion: a log, `TACHYON.LOG`, with crash reports (decision 26)
 - [x] Carried over from Sprint 1: HTTPS works on Windows 95, and the About box's "Randomness" line reads 256 of 256 bits. The status bar timings weren't reported; they move to the backlog's TLS measurement
 
@@ -103,6 +102,7 @@ Grow the test builds' installer (NSIS, since Sprint 2: decision 25) into the alp
 
 Unscheduled. Pull items into a sprint when they serve its goal.
 
+- **Crash on a two-finger trackpad scroll (George, Sprint 2; low priority).** On Windows 95 C in a virtual machine on a Mac, scrolling any loaded page with two fingers ends in "an invalid page fault in module KERNEL32.DLL". The stack pointer is outside the thread's own stack, in Windows 95's shared memory where its 16-bit code runs. The scroll bar and its buttons are fine, so suspect the wheel messages (`WM_MOUSEWHEEL` and IntelliPoint's `MSWHEEL_ROLLMSG`, handled in `view.c`) and how the virtual machine's mouse driver delivers them. The crash report in `TACHYON.LOG` (decision 26) should show the rest.
 - **Period-correct toolchain (before the alpha).** Ubuntu's MinGW-w64 runtime (libgcc, libmingwex, startup code) is compiled for the Pentium Pro and uses `cmov`, so today's builds crash at startup on an original Pentium, a Pentium MMX or an AMD K6. Build GCC's runtime and the MinGW-w64 CRT with `-march=i586`, cache the toolchain in CI, then set `TACHYON_ISA_FLOOR=i586`. Ubuntu's prebuilt NSIS installer stub uses `cmov` too, so it needs rebuilding the same way. Could be a short sprint of its own.
 - **Measure TLS on period hardware:** handshake times for RSA and ECDSA sites on an emulated Pentium II (86Box), the status bar's "Done" and "read in" timings on George's machine, and the entropy pool's strength without CryptoAPI.
 - **Full UTS #46** (internationalised domain names): the mapping table, NFC, and the bidi and joiner rules. 31 web-platform-tests host cases wait on it.
@@ -173,7 +173,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 ## Sprint history
 
-### Sprint 2: HTML5 parser and DOM (started 2026-10-21; the parser merged as PR #3)
+### Sprint 2: HTML5 parser and DOM (2026-10-21; merged as PR #3, the installer and log in PR #4)
 
 - Read the current HTML Standard before writing the parser, which mattered: since 2025, `<?target data?>` makes processing instruction nodes, `<select>` lost its own insertion modes (the customizable `<select>` work), and `<select>` became a scope boundary. html5lib-tests moved its tree-construction tests to web-platform-tests.
 - The tokenizer passed all 7,049 html5lib tokenizer cases on its first run. The tree builder passed 3,882 of 3,898 on its first; the rest came down to `<nobr>` ignoring the adoption agency's "any other end tag" result, forms inside a `<template>` fragment, and a carriage return that the test generator's own newline translation had eaten.
@@ -183,6 +183,8 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
 - George asked for a release with an installer to test from, so the basics of Sprint 9 came forward (decision 25). `SETUP.EXE` is 639 KB with everything in it. It installs to `C:\Program Files\Tachyon` with Start menu and desktop shortcuts and an Add/Remove Programs entry. CI installs and uninstalls it under Wine on every push, and publishes a pre-release when a version tag is pushed.
 - The parser and browser were merged as PR #3 before the installer was done. The installer and releases followed in a pull request of their own, so the sprint stays open until George has run the demo from the first release.
+- **Closed** with the demo done on Windows 95, the 0.2.0 release waiting for PR #4 to be merged and tagged, and one bug parked at George's call: a crash on a two-finger trackpad scroll (scroll bar and keys are fine), now in the backlog with what we know.
+- CI's plain-HTTP check moved from neverssl.com, which timed out from GitHub's runners twice in one day, to `http://example.com/`.
 - **The first crash on Windows 95:** scrolling Wikipedia's document tree ends in "an invalid page fault in module KERNEL32.DLL", with the stack pointer outside the thread's own stack (in Windows 95's shared memory, where its 16-bit parts run). Wine never shows it. George suggested a logger, so Tachyon now keeps `TACHYON.LOG` with crash reports (decision 26), and the next test build should say which row was being drawn.
 - **The first run on Windows 95:** George installed Tachyon with `SETUP.EXE` and loaded Google over HTTPS on Windows 95 C (4.00.950 C) with a Pentium Pro and 128 MB. That also covers Sprint 1's demo. The About box reported 256 of 256 bits of randomness. The installer starting at all shows that its imports exist on Windows 95 C; the original release is still unchecked.
 
