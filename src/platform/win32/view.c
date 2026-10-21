@@ -4,11 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_outline.h"
 #include "tc_surface.h"
 #include "tc_utf8.h"
 #include "tc_version.h"
 
-enum page_kind { PAGE_HOME, PAGE_BLANK, PAGE_MESSAGE, PAGE_SOURCE };
+enum page_kind { PAGE_HOME, PAGE_BLANK, PAGE_MESSAGE, PAGE_SOURCE, PAGE_TREE };
 
 /* Most of a big document is still worth seeing; all of it costs too much
    memory on a 1990s PC. */
@@ -36,8 +37,19 @@ typedef struct view {
     char *text, *detail;
     char warning[512];
     source_text source;
-    int top_line;        /* first visible source line */
+    int top_line;        /* first visible source line or tree row */
     int line_height, char_width;
+
+    /* A parsed document, shown as PAGE_TREE or (its source) PAGE_SOURCE. */
+    int has_document;
+    tc_html_page document;
+    char *head;          /* the response head, for the source */
+    size_t head_len;
+    tc_outline outline;
+    tc_outline_text row_text;
+    int selected;        /* selected tree row, or -1 */
+    char info[512];      /* the line above the tree */
+    int show_source;     /* documents: show the source, not the tree */
 
     /* Back buffer: a 32 bpp top-down DIB section selected into `dc`. */
     HDC dc;
@@ -49,6 +61,9 @@ typedef struct view {
     HFONT font_logo, font_tagline, font_heading, font_body, font_small, font_mono;
     int paint_count;
 } view;
+
+#define TREE_INDENT    2    /* characters per level */
+#define TREE_BOX       12   /* pixels for the [+] box and its gap */
 
 #define BANNER_TOP     TC_RGB(0, 0, 192)
 #define BANNER_BOTTOM  TC_RGB(0, 0, 40)
@@ -231,11 +246,29 @@ static void source_wrap(source_text *s, int cols)
     }
 }
 
+/* The height of the information bar above the tree. */
+static int info_height(const view *v)
+{
+    return v->page == PAGE_TREE ? v->line_height + 8 : 0;
+}
+
 static int visible_lines(view *v)
 {
     RECT client;
     GetClientRect(v->hwnd, &client);
-    return v->line_height ? TC_MAX(1, (client.bottom - 2 * SOURCE_MARGIN) / v->line_height) : 1;
+    return v->line_height
+               ? TC_MAX(1, (client.bottom - info_height(v) - 2 * SOURCE_MARGIN) / v->line_height)
+               : 1;
+}
+
+/* Lines of source or rows of tree. */
+static int total_lines(const view *v)
+{
+    if (v->page == PAGE_SOURCE)
+        return (int)v->source.nlines;
+    if (v->page == PAGE_TREE)
+        return (int)v->outline.count;
+    return 0;
 }
 
 static void update_scrollbar(view *v)
@@ -244,8 +277,8 @@ static void update_scrollbar(view *v)
     memset(&si, 0, sizeof si);
     si.cbSize = sizeof si;
     si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-    if (v->page == PAGE_SOURCE) {
-        si.nMax = (int)v->source.nlines - 1;
+    if (total_lines(v)) {
+        si.nMax = total_lines(v) - 1;
         si.nPage = (UINT)visible_lines(v);
         si.nPos = v->top_line;
     }
@@ -254,7 +287,7 @@ static void update_scrollbar(view *v)
 
 static void scroll_to(view *v, int line)
 {
-    int max = (int)v->source.nlines - visible_lines(v);
+    int max = total_lines(v) - visible_lines(v);
     line = TC_CLAMP(line, 0, TC_MAX(max, 0));
     if (line != v->top_line) {
         v->top_line = line;
@@ -334,18 +367,19 @@ static void paint_home(view *v, tc_surface *s)
         text_block(v, v->font_body, RGB(128, 0, 0), &r, v->warning);
         r.top += 20;
     }
-    text_block(v, v->font_heading, RGB(0, 0, 128), &r, "Sprint 1: Hello, HTTPS");
+    text_block(v, v->font_heading, RGB(0, 0, 128), &r, "Sprint 2: HTML5 parser and DOM");
     r.top += 6;
     text_block(v, v->font_body, RGB(0, 0, 0), &r,
-               "Tachyon can now fetch pages over HTTP and HTTPS (TLS 1.2 and 1.3) and shows their "
-               "source. Type an address above, such as example.com or en.wikipedia.org.");
+               "Tachyon now reads pages the way today's browsers do: it fetches them over HTTPS and parses "
+               "their HTML into a document tree, the DOM, which it shows when a page loads. Click a [+] to "
+               "open an element, or press Ctrl+U for the page's source. Try example.com or en.wikipedia.org.");
     r.top += 14;
     text_block(v, v->font_heading, RGB(0, 0, 128), &r, "Coming next");
     r.top += 6;
     text_block(v, v->font_body, RGB(0, 0, 0), &r,
-               "\x95  Sprint 2: an HTML5 parser and DOM\r\n"
                "\x95  Sprint 3: First Light, with CSS, layout and text: Wikipedia on Windows 95\r\n"
-               "\x95  Sprint 4: images and fonts");
+               "\x95  Sprint 4: images and fonts\r\n"
+               "\x95  Sprint 5: JavaScript");
     r.top += 18;
     snprintf(footer, sizeof footer, "%s %s  \x95  GNU GPL v3  \x95  %s", TC_NAME, TC_VERSION, TC_HOMEPAGE);
     text_block(v, v->font_small, RGB(128, 128, 128), &r, footer);
@@ -384,6 +418,96 @@ static void paint_source(view *v)
     }
 }
 
+static COLORREF span_color(int kind)
+{
+    switch (kind) {
+    case TC_SPAN_TAG: return RGB(136, 18, 128);
+    case TC_SPAN_ATTR_NAME: return RGB(153, 69, 0);
+    case TC_SPAN_ATTR_VALUE: return RGB(26, 26, 166);
+    case TC_SPAN_TEXT: return RGB(0, 0, 0);
+    case TC_SPAN_COMMENT: return RGB(35, 110, 37);
+    case TC_SPAN_DOCTYPE: return RGB(110, 110, 110);
+    case TC_SPAN_NOTE: return RGB(128, 128, 128);
+    default: return RGB(136, 18, 128);
+    }
+}
+
+/* Where a tree row's [+] box starts, in pixels. Deep rows stop indenting at
+   half the width, so their text stays on screen. */
+static int row_x(const view *v, const tc_outline_row *row)
+{
+    int indent = TREE_INDENT * v->char_width;
+    int max_levels = indent ? TC_MAX(1, v->width / 2 / indent) : 1;
+    return SOURCE_MARGIN + TC_MIN((int)row->depth, max_levels) * indent;
+}
+
+static void draw_box(tc_surface *s, int x, int y, int expanded)
+{
+    tc_color frame = TC_RGB(128, 128, 128), mark = TC_RGB(0, 0, 0);
+
+    tc_surface_fill(s, tc_rect_make(x, y, 9, 9), TC_RGB(255, 255, 255));
+    tc_surface_fill(s, tc_rect_make(x, y, 9, 1), frame);
+    tc_surface_fill(s, tc_rect_make(x, y + 8, 9, 1), frame);
+    tc_surface_fill(s, tc_rect_make(x, y, 1, 9), frame);
+    tc_surface_fill(s, tc_rect_make(x + 8, y, 1, 9), frame);
+    tc_surface_fill(s, tc_rect_make(x + 2, y + 4, 5, 1), mark);
+    if (!expanded)
+        tc_surface_fill(s, tc_rect_make(x + 4, y + 2, 1, 5), mark);
+}
+
+/* UTF-8 to UTF-16 for TextOutW; characters beyond the BMP become '?'. */
+static int to_wide(const char *utf8, size_t len, WCHAR *out, int max)
+{
+    size_t i = 0;
+    int n = 0;
+    while (i < len && n < max) {
+        uint32_t cp;
+        i += tc_utf8_decode(utf8 + i, len - i, &cp);
+        out[n++] = (WCHAR)(cp > 0xFFFF || cp < 0x20 ? '?' : cp);
+    }
+    return n;
+}
+
+static void paint_tree(view *v, tc_surface *s)
+{
+    int i, rows = visible_lines(v) + 1, top = info_height(v) + SOURCE_MARGIN;
+    WCHAR wide[TC_OUTLINE_MAX_TEXT + 8];
+
+    /* Pixels first, then GDI's text on top. */
+    tc_surface_fill(s, tc_rect_make(0, 0, s->width, info_height(v) - 1), TC_RGB(232, 232, 232));
+    tc_surface_fill(s, tc_rect_make(0, info_height(v) - 1, s->width, 1), TC_RGB(160, 160, 160));
+    for (i = 0; i < rows && (size_t)(v->top_line + i) < v->outline.count; i++) {
+        const tc_outline_row *row = &v->outline.rows[v->top_line + i];
+        int y = top + i * v->line_height;
+        if (v->top_line + i == v->selected)
+            tc_surface_fill(s, tc_rect_make(0, y, s->width, v->line_height), TC_RGB(204, 224, 255));
+        if (row->expandable)
+            draw_box(s, row_x(v, row), y + (v->line_height - 9) / 2, row->expanded);
+    }
+    GdiFlush();
+
+    SelectObject(v->dc, v->font_small);
+    SetTextColor(v->dc, RGB(64, 64, 64));
+    TextOutA(v->dc, SOURCE_MARGIN, (info_height(v) - v->line_height) / 2 + 1, v->info, (int)strlen(v->info));
+    SelectObject(v->dc, v->font_mono);
+    for (i = 0; i < rows && (size_t)(v->top_line + i) < v->outline.count; i++) {
+        const tc_outline_row *row = &v->outline.rows[v->top_line + i];
+        const tc_outline_text *t = &v->row_text;
+        int x = row_x(v, row) + TREE_BOX, y = top + i * v->line_height;
+        size_t k;
+        if (tc_outline_row_text(&v->outline, (size_t)(v->top_line + i), &v->row_text) != TC_OK)
+            continue;
+        for (k = 0; k < t->nspans && x < v->width; k++) {
+            size_t start = t->span_start[k];
+            size_t end = k + 1 < t->nspans ? t->span_start[k + 1] : t->text.len;
+            int n = to_wide(t->text.data + start, end - start, wide, (int)TC_ARRAY_LEN(wide));
+            SetTextColor(v->dc, span_color(t->span_kind[k]));
+            TextOutW(v->dc, x, y, wide, n);
+            x += n * v->char_width;
+        }
+    }
+}
+
 static void render(view *v)
 {
     tc_surface s;
@@ -403,6 +527,9 @@ static void render(view *v)
         break;
     case PAGE_SOURCE:
         paint_source(v);
+        break;
+    case PAGE_TREE:
+        paint_tree(v, &s);
         break;
     case PAGE_BLANK:
         break;
@@ -438,7 +565,7 @@ static void on_vscroll(view *v, int code)
     case SB_PAGEUP: scroll_to(v, v->top_line - page); break;
     case SB_PAGEDOWN: scroll_to(v, v->top_line + page); break;
     case SB_TOP: scroll_to(v, 0); break;
-    case SB_BOTTOM: scroll_to(v, (int)v->source.nlines); break;
+    case SB_BOTTOM: scroll_to(v, total_lines(v)); break;
     case SB_THUMBTRACK:
     case SB_THUMBPOSITION:
         memset(&si, 0, sizeof si);
@@ -450,9 +577,92 @@ static void on_vscroll(view *v, int code)
     }
 }
 
+/* Select a tree row and scroll it into view. */
+static void select_row(view *v, int row)
+{
+    int page = visible_lines(v);
+
+    if (!v->outline.count)
+        return;
+    row = TC_CLAMP(row, 0, (int)v->outline.count - 1);
+    v->selected = row;
+    if (row < v->top_line)
+        scroll_to(v, row);
+    else if (row >= v->top_line + page)
+        scroll_to(v, row - page + 1);
+    InvalidateRect(v->hwnd, NULL, FALSE);
+}
+
+/* Expand or collapse a row, keeping the selection on the same node. */
+static void set_expanded(view *v, int row, int expanded)
+{
+    const tc_node *selected = v->selected >= 0 && (size_t)v->selected < v->outline.count
+                                  ? v->outline.rows[v->selected].node
+                                  : NULL;
+
+    if (row < 0 || (size_t)row >= v->outline.count || !v->outline.rows[row].expandable ||
+        v->outline.rows[row].expanded == expanded)
+        return;
+    tc_outline_set_expanded(&v->outline, (size_t)row, expanded);
+    v->selected = selected ? (int)tc_outline_find(&v->outline, selected) : -1;
+    scroll_to(v, v->top_line); /* clamps to the new length */
+    update_scrollbar(v);
+    InvalidateRect(v->hwnd, NULL, FALSE);
+}
+
+static int on_tree_key(view *v, WPARAM key)
+{
+    int page = visible_lines(v), sel = v->selected;
+    const tc_outline_row *row = sel >= 0 && (size_t)sel < v->outline.count ? &v->outline.rows[sel] : NULL;
+
+    switch (key) {
+    case VK_UP: select_row(v, sel < 0 ? v->top_line : sel - 1); return 1;
+    case VK_DOWN: select_row(v, sel < 0 ? v->top_line : sel + 1); return 1;
+    case VK_PRIOR: select_row(v, (sel < 0 ? v->top_line : sel) - page); return 1;
+    case VK_NEXT: select_row(v, (sel < 0 ? v->top_line : sel) + page); return 1;
+    case VK_HOME: select_row(v, 0); return 1;
+    case VK_END: select_row(v, (int)v->outline.count - 1); return 1;
+    case VK_LEFT:
+        if (row && row->expanded)
+            set_expanded(v, sel, 0);
+        else if (row)
+            select_row(v, (int)tc_outline_parent(&v->outline, (size_t)sel));
+        return 1;
+    case VK_RIGHT:
+        if (row && row->expandable && !row->expanded)
+            set_expanded(v, sel, 1);
+        else if (row && row->expanded)
+            select_row(v, sel + 1);
+        return 1;
+    case VK_RETURN:
+        if (row)
+            set_expanded(v, sel, !row->expanded);
+        return 1;
+    case VK_SPACE: scroll_to(v, v->top_line + page); return 1;
+    }
+    return 0;
+}
+
+/* A click in the tree: the [+] box toggles, elsewhere selects (and a
+   double click toggles). */
+static void on_tree_click(view *v, int x, int y, int double_click)
+{
+    int row = v->top_line + (y - info_height(v) - SOURCE_MARGIN) / TC_MAX(v->line_height, 1);
+    int box;
+
+    if (y < info_height(v) + SOURCE_MARGIN || row >= (int)v->outline.count)
+        return;
+    box = row_x(v, &v->outline.rows[row]);
+    select_row(v, row);
+    if (double_click || (x >= box - 2 && x < box + TREE_BOX))
+        set_expanded(v, row, !v->outline.rows[row].expanded);
+}
+
 static int on_key(view *v, WPARAM key)
 {
     int page = visible_lines(v);
+    if (v->page == PAGE_TREE)
+        return on_tree_key(v, key);
     switch (key) {
     case VK_UP: scroll_to(v, v->top_line - 1); return 1;
     case VK_DOWN: scroll_to(v, v->top_line + 1); return 1;
@@ -460,7 +670,7 @@ static int on_key(view *v, WPARAM key)
     case VK_NEXT:
     case VK_SPACE: scroll_to(v, v->top_line + page); return 1;
     case VK_HOME: scroll_to(v, 0); return 1;
-    case VK_END: scroll_to(v, (int)v->source.nlines); return 1;
+    case VK_END: scroll_to(v, total_lines(v)); return 1;
     }
     return 0;
 }
@@ -487,6 +697,8 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return -1;
         v->hwnd = hwnd;
         v->page = PAGE_BLANK;
+        v->selected = -1;
+        tc_outline_text_init(&v->row_text);
         v->font_logo = make_font("Times New Roman", 64, FW_BOLD, 1, ANSI_CHARSET, VARIABLE_PITCH | FF_ROMAN);
         v->font_tagline = make_font("Arial", 20, FW_NORMAL, 1, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS);
         v->font_heading = make_font("Arial", 18, FW_BOLD, 0, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS);
@@ -525,7 +737,10 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETDLGCODE:
         return DLGC_WANTARROWS;
     case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
         SetFocus(hwnd);
+        if (v->page == PAGE_TREE)
+            on_tree_click(v, (short)LOWORD(lp), (short)HIWORD(lp), msg == WM_LBUTTONDBLCLK);
         return 0;
     case WM_DESTROY:
         free_backbuffer(v);
@@ -538,6 +753,10 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         source_free(&v->source);
         free(v->text);
         free(v->detail);
+        free(v->head);
+        tc_outline_free(&v->outline);
+        tc_outline_text_free(&v->row_text);
+        tc_html_page_free(&v->document);
         free(v);
         SetWindowLongA(hwnd, GWL_USERDATA, 0);
         return 0;
@@ -550,7 +769,7 @@ int tw_view_register(HINSTANCE instance)
     WNDCLASSA wc;
     msh_mousewheel = RegisterWindowMessageA("MSWHEEL_ROLLMSG");
     memset(&wc, 0, sizeof wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc = view_proc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
@@ -579,6 +798,14 @@ static view *begin_page(HWND hwnd, enum page_kind page, const char *url)
     v->text = v->detail = NULL;
     source_free(&v->source);
     v->top_line = 0;
+    if (v->has_document) {
+        tc_outline_free(&v->outline);
+        tc_html_page_free(&v->document);
+        free(v->head);
+        v->head = NULL;
+        v->has_document = 0;
+    }
+    v->selected = -1;
     return v;
 }
 
@@ -613,15 +840,13 @@ void tw_view_show_message(HWND hwnd, const char *url, const char *heading, const
     end_page(v);
 }
 
-int tw_view_show_source(HWND hwnd, const char *url, const char *head, size_t head_len, const char *body,
-                        size_t body_len)
+/* Fill v->source with a response head and body. */
+static int fill_source(view *v, const char *head, size_t head_len, const char *body, size_t body_len)
 {
     static const char note[] = "\n\n[Tachyon shows only the first 2 MB of large documents.]";
-    view *v = begin_page(hwnd, PAGE_SOURCE, url);
     size_t column = 0;
 
-    if (!v)
-        return TC_ERR_INVALID;
+    source_free(&v->source);
     source_append(&v->source, head, head_len, &column);
     v->source.head_len = v->source.len;
     if (!source_append(&v->source, body, body_len, &column)) {
@@ -631,14 +856,127 @@ int tw_view_show_source(HWND hwnd, const char *url, const char *head, size_t hea
         for (i = 0; i < n && v->source.len < v->source.text_cap; i++)
             v->source.text[v->source.len++] = (WCHAR)note[i];
     }
-    if (!v->source.text) {
+    if (!v->source.text)
+        return TC_ERR_NOMEM;
+    v->source.wrap_cols = 0;
+    layout_source(v);
+    return TC_OK;
+}
+
+int tw_view_show_source(HWND hwnd, const char *url, const char *head, size_t head_len, const char *body,
+                        size_t body_len)
+{
+    view *v = begin_page(hwnd, PAGE_SOURCE, url);
+
+    if (!v)
+        return TC_ERR_INVALID;
+    if (fill_source(v, head, head_len, body, body_len) != TC_OK) {
         tw_view_show_message(hwnd, url, "Out of memory", "This page is too big to show.", NULL);
         return TC_ERR_NOMEM;
     }
-    v->source.wrap_cols = 0;
-    layout_source(v);
     end_page(v);
     return TC_OK;
+}
+
+static const char *encoding_source_text(tc_encoding_source source)
+{
+    switch (source) {
+    case TC_ENCSRC_BOM: return "from a byte order mark";
+    case TC_ENCSRC_HTTP: return "from the HTTP header";
+    case TC_ENCSRC_PRESCAN: return "from the page";
+    case TC_ENCSRC_META: return "from a <meta> tag, read again";
+    default: return "a guess";
+    }
+}
+
+/* "1,234" */
+static void with_commas(size_t n, char *out, size_t size)
+{
+    char digits[32];
+    size_t len, i, o = 0;
+
+    snprintf(digits, sizeof digits, "%lu", (unsigned long)n);
+    len = strlen(digits);
+    for (i = 0; i < len && o + 2 < size; i++) {
+        if (i && (len - i) % 3 == 0)
+            out[o++] = ',';
+        out[o++] = digits[i];
+    }
+    out[o] = '\0';
+}
+
+static void build_info(view *v)
+{
+    tc_dom_stats stats;
+    char elements[32], texts[32];
+    const char *mode = v->document.doc->mode == TC_QUIRKS          ? "quirks mode"
+                       : v->document.doc->mode == TC_LIMITED_QUIRKS ? "limited-quirks mode"
+                                                                    : "standards mode";
+    size_t n;
+
+    tc_dom_count(&v->document.doc->node, &stats);
+    with_commas(stats.elements, elements, sizeof elements);
+    with_commas(stats.texts, texts, sizeof texts);
+    snprintf(v->info, sizeof v->info, "Document tree: %s elements, %s text nodes; %s (%s); %s",
+             elements, texts, tc_encoding_name(v->document.encoding), encoding_source_text(v->document.encoding_source),
+             mode);
+    if (!tc_encoding_supported(v->document.encoding)) {
+        n = strlen(v->info);
+        snprintf(v->info + n, sizeof v->info - n, ". Tachyon can't decode %s yet, so some text will look wrong.",
+                 tc_encoding_name(v->document.encoding));
+    }
+}
+
+/* Show the document as a tree or as source, whichever is wanted. */
+static int present_document(view *v)
+{
+    v->top_line = 0;
+    v->selected = -1;
+    if (v->show_source) {
+        v->page = PAGE_SOURCE;
+        if (fill_source(v, v->head, v->head_len, v->document.text.data, v->document.text.len) != TC_OK)
+            return TC_ERR_NOMEM;
+    } else {
+        source_free(&v->source);
+        v->page = PAGE_TREE;
+    }
+    end_page(v);
+    return TC_OK;
+}
+
+int tw_view_show_document(HWND hwnd, const char *url, const char *head, size_t head_len, tc_html_page *page)
+{
+    view *v = begin_page(hwnd, PAGE_TREE, url);
+
+    if (!v)
+        return TC_ERR_INVALID;
+    v->document = *page;
+    memset(page, 0, sizeof *page);
+    v->has_document = 1;
+    v->head = malloc(head_len + 1);
+    if (v->head) {
+        memcpy(v->head, head, head_len);
+        v->head[head_len] = '\0';
+        v->head_len = head_len;
+    }
+    if (!v->head || tc_outline_init(&v->outline, &v->document.doc->node) != TC_OK) {
+        tw_view_show_message(hwnd, url, "Out of memory", "This page is too big to show.", NULL);
+        return TC_ERR_NOMEM;
+    }
+    build_info(v);
+    return present_document(v);
+}
+
+int tw_view_set_show_source(HWND hwnd, int show_source)
+{
+    view *v = get_view(hwnd);
+
+    if (!v)
+        return 0;
+    v->show_source = show_source;
+    if (v->has_document)
+        present_document(v);
+    return v->has_document;
 }
 
 void tw_view_set_warning(HWND hwnd, const char *warning)

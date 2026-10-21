@@ -30,44 +30,29 @@ does not remember anything between sessions; this board does.
 | Display | 800×600, 16-bit colour | 640×480, 256 colours |
 | Network | TCP/IP over a network card or Dial-Up Networking, IPv4 | same |
 
-## Current sprint: Sprint 1, Hello, HTTPS
+## Current sprint: Sprint 2, HTML5 parser and DOM
 
-**Goal:** Tachyon fetches `https://` pages from the real internet on Windows 95.
+**Goal:** a spec-compliant HTML5 parser building a DOM.
 
-**Demo:** type `example.com`, see the page's HTML source.
+**Demo:** load a page and see its DOM tree (View > Document Tree).
 
 **Definition of done**
 
-- [x] Mbed TLS vendored with the Windows 95 configuration: **4.1 LTS** (decision 10)
-- [x] Entropy pool: CryptGenRandom when present (loaded at runtime), CPU jitter, a seed file, input timings
-- [x] Tachyon's own clock and date conversion; a home-page warning when the clock is earlier than the build
-- [x] WHATWG URL parser: **896 of 896** web-platform-tests URL cases; 56 of 87 host-to-ASCII cases (the rest need full UTS #46, backlog)
-- [x] Winsock 1.1 networking on a worker thread: DNS, non-blocking sockets with `select`, cancellation within 200 ms
-- [x] HTTP/1.1 client: content length, chunked, close-delimited, redirects, gzip and deflate (keep-alive moved to Sprint 3, decision 11)
-- [x] Mozilla's roots compiled in; SNI; ALPN `http/1.1`; TLS 1.2 minimum; plain-English certificate errors
-- [x] UI: loading state, working Stop, progress in the status bar, scrollable page source, error pages
-- [x] `FETCH.EXE` and 23 integration tests against a local test server, natively and under Wine
-- [x] HTTP proxy support (`--proxy`), pulled in from the backlog (decision 14)
-- [x] CI's real-sites job is green: example.com, en.wikipedia.org, news.ycombinator.com and others, trusting only Mozilla's roots
-- [ ] **George loads `https://example.com` in Tachyon on Windows 95** (the demo; covers Sprint 0's demo too)
-- [ ] George reports the About box's "Randomness" line and the status bar timings from Windows 95
+- [x] Encodings: UTF-8, UTF-16LE/BE, the 28 legacy single-byte encodings, x-user-defined and replacement, with every WHATWG label (Chinese, Japanese and Korean multi-byte encodings are deferred, decision 18)
+- [x] Encoding sniffing: BOM, HTTP `charset`, the `<meta>` prescan, XML declarations, windows-1252 default; re-parse when a `<meta charset>` disagrees: **html5lib encoding tests 82 of 82**
+- [x] Tokenizer: every state in today's HTML Standard (including processing instructions), all 2,231 named character references, parse error codes: **html5lib tokenizer tests 7,049 of 7,049** (3 of them expect an error code from before processing instructions; listed as known)
+- [x] Tree construction: every insertion mode, the adoption agency algorithm, foster parenting, templates, SVG and MathML, the new `<select>` parsing, fragment parsing: **web-platform-tests tree construction 3,890 of 3,898** (the other 8 need `<selectedcontent>` mirroring, moved to Sprint 6; 6 cases that need scripts are skipped)
+- [x] DOM in a per-document arena: document, doctype, element, text, comment, processing instruction, template contents
+- [x] The browser parses pages on the worker thread and shows a DOM tree view; the window title comes from the DOM; the source view uses the page's encoding
+- [x] `FETCH.EXE --dom`, with an integration test; CI parses the real sites (all nine, from example.com to BBC News and Yahoo! Japan)
+- [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
+- [ ] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo)
+- [ ] Carried over from Sprint 1: George loads `https://example.com` on Windows 95 and reports the About box's "Randomness" line and the status bar timings
 
 ## Upcoming sprints
 
 The goals are firm; the scope lists are drafts and get refined at the start
 of each sprint.
-
-### Sprint 2: HTML5 parser and DOM
-
-**Goal:** a spec-compliant HTML5 parser building a DOM.
-**Demo:** a DOM tree view of any page.
-
-- Encoding sniffing (BOM, `<meta charset>`, HTTP header) and decoders (UTF-8, windows-1252 and friends).
-- Tokenizer with all states and the named character reference table; tree construction with every insertion mode, the adoption agency algorithm and foster parenting.
-- DOM nodes in a memory arena.
-- An html5lib-tests runner on the host.
-- The page title from the DOM, replacing Sprint 1's naive `<title>` search.
-- **Done when** html5lib tokenizer tests are ≥ 99% and tree-construction tests ≥ 95% passing (excluding scripting-dependent cases), and the top sites parse without crashing.
 
 ### Sprint 3: First Light
 
@@ -94,7 +79,7 @@ Vendor QuickJS-ng with the Win9x threading patch; event loop with tasks, microta
 ### Sprint 6: Forms, cookies and navigation
 
 **Goal:** log in to a website.
-Form controls and submission (GET/POST, urlencoded and multipart), cookies with the public suffix list, session history, searching from the address bar.
+Form controls and submission (GET/POST, urlencoded and multipart), cookies with the public suffix list, session history, searching from the address bar. `<select>` and `<option>` state, which also brings `<selectedcontent>` mirroring (the last 4 web-platform-tests tree-construction cases).
 
 ### Sprint 7: Modern layout
 
@@ -121,6 +106,12 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Verify the hand-curated export lists against real Windows 95 DLLs (`EXPORTS.EXE`).
 - TLS session resumption, to make repeat visits to a site faster.
 - Certificate revocation (OCSP stapling or a CRLite-style list) and HSTS.
+- **Chinese, Japanese and Korean encodings** (GBK, gb18030, Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR): about 200 KB of index tables, or less compressed. Best done with Sprint 4's font fallback, when those pages can be drawn.
+- Declarative shadow DOM (`<template shadowrootmode>`) and `<template for>` content patching, both new in the HTML Standard.
+- An XML parser for XHTML (`application/xhtml+xml` is parsed as HTML for now).
+- Parsing while downloading, which `document.write()` and progressive rendering both need.
+- DOM memory: page text is kept twice (the decoded page and its text nodes). Make text nodes slices of the decoded page, or drop the decoded page once there's a renderer.
+- The document tree view: horizontal scrolling, finding text, copying a node.
 - Reading Internet Explorer's proxy settings from the registry.
 - HTTP/2 (most sites still accept HTTP/1.1).
 - Brotli content encoding (needed for WOFF2 in Sprint 4 anyway).
@@ -154,6 +145,14 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 14 | HTTP proxy support pulled in from the backlog | The only way to test against real sites from Claude's container, and corporate and retro-computing networks use proxies | Sprint 1 |
 | 15 | Entropy: our own SHA-256 pool; CryptGenRandom only when present; jitter credited at 1 bit per 4 changing samples; a seed file next to the program | Windows 95 RTM has no CryptoAPI, and Mbed TLS needs entropy before it can hash anything itself | Sprint 1 |
 | 16 | Release builds use `-O2` (not `-O3`); packages are stripped | `-O3` was 40% bigger for little gain on a small-cache Pentium; the floppy must fit the browser | Sprint 1 |
+| 17 | DOM text is UTF-8 (lone surrogates, which only scripts can make, as WTF-8) | The rest of the engine is UTF-8; it's half the memory of UTF-16 for mostly-ASCII pages; JavaScript bindings convert | Sprint 2 |
+| 18 | Chinese, Japanese and Korean multi-byte encodings deferred; such pages decode as windows-1252 with a warning in the tree view | Their tables are about 200 KB, and Tachyon can't draw those scripts until Sprint 4's font fallback | Sprint 2 |
+| 19 | Follow today's HTML Standard (October 2026), including processing instructions and the customizable `<select>` parser changes, tested with html5lib-tests and web-platform-tests from the same month | Browsers ship these, and the test suites already expect them | Sprint 2 |
+| 20 | Parse with scripting off, so `<noscript>` content becomes elements | Tachyon doesn't run scripts until Sprint 5, so a page's no-script fallback is what the user should get | Sprint 2 |
+| 21 | DOM nodes live in a per-document arena, freed with the page; active formatting elements are recreated from the element's attributes | Fast and simple while only the parser changes the tree; Sprint 5 (scripts) revisits both | Sprint 2 |
+| 22 | Nesting depth capped at 400: deeper elements are attached to the 400th | Browsers cap it too (Chromium at 512), and later stages must not overflow Windows 95's 1 MB stack | Sprint 2 |
+| 23 | A `<meta charset>` found while parsing restarts the parse in the new encoding | The whole page is in memory, so parsing it again is simple and always correct; switching decoders mid-stream isn't | Sprint 2 |
+| 24 | The document tree view hides whitespace-only text nodes | Every DOM inspector does; `FETCH --dom` shows them all | Sprint 2 |
 
 ## Risks
 
@@ -164,16 +163,29 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - **Hand-curated export lists.** kernel32 and crtdll come from Wine's 1998 reconstruction of Windows 95; the rest are from knowledge. Verify with real DLLs.
 - **Clocks.** Certificate checks need the right date, and VM clocks are often wrong. Tachyon warns, but can't fix it.
 - **Scope.** "Full HTML5" is unbounded; the conformance suites and the site list keep us honest.
+- **The floppy is nearly full.** TACHYON.EXE is 1.1 MB stripped, leaving 249 KB on the 1.44 MB floppy, and Sprint 3's fonts won't fit. The CD image and zip already carry everything; the installer (Sprint 9) will need several floppies or a CD.
+- **Parsing speed on a Pentium.** GitHub's 572 KB home page parses in 7 ms on the build machine; a 1990s CPU may be a hundred times slower. George's "read in" timings will tell.
 
 ## Sprint history
 
-### Sprint 1: Hello, HTTPS (started 2026-10-21)
+### Sprint 2: HTML5 parser and DOM (started 2026-10-21)
+
+- Read the current HTML Standard before writing the parser, which mattered: since 2025, `<?target data?>` makes processing instruction nodes, `<select>` lost its own insertion modes (the customizable `<select>` work), and `<select>` became a scope boundary. html5lib-tests moved its tree-construction tests to web-platform-tests.
+- The tokenizer passed all 7,049 html5lib tokenizer cases on its first run. The tree builder passed 3,882 of 3,898 on its first; the rest came down to `<nobr>` ignoring the adoption agency's "any other end tag" result, forms inside a `<template>` fragment, and a carriage return that the test generator's own newline translation had eaten.
+- Integration found a latent Sprint 1 bug: `tc_buf_reserve` didn't NUL-terminate a newly allocated buffer.
+- Fuzzing (libFuzzer with AddressSanitizer and UBSan, seeded from the test suites): 19.4 million inputs locally (three workers for 30 minutes, after a short run) with no crash, leak or undefined behaviour; CI now fuzzes for three minutes on every push.
+- CI's real-sites job parsed all nine sites under Wine at the first attempt, Wikipedia's Windows 95 article (4,421 elements) and BBC News (4,899) among them; Hacker News and NeverSSL come out in quirks mode, as they should with no doctype.
+- Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
+- Sprint 1's Windows 95 demo is still to do, together with this sprint's.
+
+### Sprint 1: Hello, HTTPS (2026-10-21, merged as PR #2)
 
 - Vendored Mbed TLS 4.1.1 LTS, zlib 1.3.2 and Mozilla's root store; wrote the platform layer, entropy pool, URL parser, HTTP client, TLS glue, loader, `FETCH.EXE` and the browser integration.
 - The URL parser passed all 896 web-platform-tests URL cases after a handful of fixes; the WPT data itself settled two spec details (`^` is encoded in paths; ASCII `xn--` domains are only lowercased).
 - The integration tests found a Winsock bug that the Linux build couldn't: `select()`'s exception set was checked after read and write waits, so every load failed with "connection refused" on Windows. Fixed before it reached a tester.
 - Real sites from Claude's container go through an egress gateway that re-signs TLS. Tachyon correctly refused it, and loaded pypi.org and npm when told to trust the gateway's CA. CI checks real sites with Mozilla's roots alone: on its first run, the packaged `FETCH.EXE` under Wine loaded all seven (example.com, Wikipedia, Hacker News, Google, GitHub, Cloudflare and plain-HTTP neverssl.com) at the first attempt, all six HTTPS sites over TLS 1.3.
 - Sprint 0 was merged without its Windows 95 demo; that test is folded into this sprint's.
+- Merged before George had run it on Windows 95, so the demo carries over to Sprint 2.
 
 ### Sprint 0: Foundations (2026-10-20, merged as PR #1)
 

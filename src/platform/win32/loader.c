@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_http.h"
+#include "tc_mime.h"
+
 typedef struct start_args {
     tw_load *load;
     char *proxy_host;
@@ -30,6 +33,28 @@ static void on_progress(void *ctx, tc_fetch_phase phase, const char *host, size_
     }
 }
 
+/* Parse an HTML response into a document, here on the worker thread so the
+   window stays responsive. The raw body isn't needed after that. */
+static void parse_page(tw_load *load)
+{
+    tc_buf *body = &load->response.body;
+    tc_mime mime;
+    uint32_t start;
+
+    if (!tc_mime_wants_html(tc_headers_get(&load->response.headers, "Content-Type"), body->data, body->len, &mime))
+        return;
+    load->parsing = 1;
+    PostMessageA(load->notify, WM_TW_PROGRESS, 0, (LPARAM)load);
+    start = tc_time_ms();
+    if (tc_html_parse_page(body->data, body->len, mime.charset, NULL, &load->page) != TC_OK) {
+        tc_html_page_free(&load->page);
+        return;
+    }
+    load->parse_ms = tc_time_ms() - start;
+    load->is_html = 1;
+    tc_buf_free(body);
+}
+
 static void load_thread(void *arg)
 {
     start_args *args = arg;
@@ -43,6 +68,9 @@ static void load_thread(void *arg)
     opts.progress = on_progress;
     opts.progress_ctx = load;
     load->result = tc_fetch(load->url, &opts, &load->response);
+    load->body_len = load->response.body.len;
+    if (load->result == TC_OK && !load->cancel)
+        parse_page(load);
     free(args->proxy_host);
     free(args);
     PostMessageA(load->notify, WM_TW_DONE, 0, (LPARAM)load);
@@ -95,6 +123,7 @@ void tw_load_free(tw_load *load)
 {
     if (load) {
         tc_response_free(&load->response);
+        tc_html_page_free(&load->page);
         free(load->url);
         free(load);
     }

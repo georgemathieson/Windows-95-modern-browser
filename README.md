@@ -7,20 +7,26 @@ HTML5, modern JavaScript and TLS 1.3, running natively on Windows 95 with
 nothing else installed. A tachyon is a hypothetical particle that travels
 backwards in time.
 
-![Tachyon showing the source of a page fetched over TLS 1.3, and refusing an intercepted connection, under Wine](docs/images/sprint-1-https.png)
+![Tachyon showing the document trees of a windows-1252 test page and of github.com, under Wine](docs/images/sprint-2-dom.png)
 
 ## Status
 
-**Sprint 1: Hello, HTTPS.** Tachyon loads pages over HTTP and HTTPS (TLS 1.2
-and 1.3, checked against Mozilla's root certificates) and shows their source.
-It can't draw pages yet: HTML parsing is Sprint 2 and rendering Sprint 3.
+**Sprint 2: HTML5 parser and DOM.** Tachyon fetches pages over HTTP and HTTPS
+(TLS 1.2 and 1.3), parses them the way today's browsers do, and shows the
+resulting document tree, which you can open and close like a DOM inspector's.
+It can't draw pages yet: rendering is Sprint 3.
 
+- An HTML parser written from the October 2026 HTML Standard: it passes
+  all 7,049 html5lib tokenizer cases and 3,890 of web-platform-tests' 3,898
+  tree-construction cases, and survives fuzzing under AddressSanitizer.
+- The WHATWG Encoding Standard's encodings (UTF-8, UTF-16 and every
+  single-byte one) and its rules for finding a page's encoding.
 - A WHATWG URL parser that passes all 896 web-platform-tests URL cases.
 - HTTP/1.1 with chunked bodies, redirects, gzip and deflate, and HTTP proxies.
 - Mbed TLS 4.1 LTS with its own entropy pool, because Windows 95 has no
   reliable random number source.
-- `FETCH.EXE`, the same network stack on the command line, for testing from
-  an MS-DOS Prompt.
+- `FETCH.EXE`, the same network stack and parser on the command line, for
+  testing from an MS-DOS Prompt.
 
 The plan, the current sprint and every decision so far are on the
 [sprint board](docs/SPRINTS.md).
@@ -52,7 +58,8 @@ sudo apt-get install cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb
 ```
 
 ```sh
-# Host build: the portable core and its unit tests, natively
+# Host build: the portable core and its unit tests (including the html5lib
+# and web-platform-tests suites), natively
 cmake --preset host && cmake --build --preset host && ctest --preset host
 
 # Windows 95 build: TACHYON.EXE and FETCH.EXE, every .exe checked by win95check
@@ -61,6 +68,9 @@ xvfb-run -a ctest --preset win95       # unit, integration and GUI smoke tests u
 
 # Package for testers: dist/*.zip, *.img (floppy), *.iso
 tools/package.sh build/win95 dist
+
+# Fuzz the HTML parser for 10 minutes (needs clang; see tools/fuzz.sh)
+tools/fuzz.sh 600
 ```
 
 ## How it's built
@@ -72,6 +82,8 @@ tools/package.sh build/win95 dist
 - **`win95check`** (`tools/win95check`) reads every executable's import table
   and refuses anything Windows 95 doesn't have, and disassembles it to refuse
   instructions newer than the CPU floor.
+- **Conformance suites, not guesswork:** html5lib-tests and
+  web-platform-tests run as unit tests natively and under Wine.
 - We write the engine (URL, HTTP, HTML, DOM, CSS, layout, painting) and borrow
   the parts nobody should write alone: Mbed TLS for TLS, zlib for
   decompression, and (from Sprint 5) QuickJS-ng for JavaScript. Third-party

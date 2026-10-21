@@ -1,15 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(tachyon VERSION 0.1.0 LANGUAGES C)
+project(tachyon VERSION 0.2.0 LANGUAGES C)
 
-set(TACHYON_SPRINT 1)
-set(TACHYON_SPRINT_NAME "Hello, HTTPS")
+set(TACHYON_SPRINT 2)
+set(TACHYON_SPRINT_NAME "HTML5 parser and DOM")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(TACHYON_WERROR "Treat compiler warnings as errors" OFF)
+option(TACHYON_FUZZ "Build the libFuzzer targets, with AddressSanitizer and UBSan (clang, host only)" OFF)
+
+if(TACHYON_FUZZ)
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined)
+  add_link_options(-fsanitize=address,undefined)
+endif()
 
 # -O2 rather than CMake's -O3: -O3 grows the code a lot for little gain, a bad
 # trade on a Pentium with 8 KB of code cache.
@@ -87,3 +93,6 @@ else()
 endif()
 add_subdirectory(tools/fetch)
 add_subdirectory(tests)
+if(TACHYON_FUZZ)
+  add_subdirectory(tests/fuzz)
+endif()

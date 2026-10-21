@@ -298,7 +298,7 @@ int tc_fetch(const char *url_text, const tc_fetch_options *opts, tc_response *r)
             report(opts, TC_FETCH_REDIRECTING, url.host ? url.host : "", 0, -1);
             continue;
         }
-        err = tc_inflate(tc_encoding_from_header(tc_headers_get(&r->headers, "Content-Encoding")), raw.data,
+        err = tc_inflate(tc_content_coding_from_header(tc_headers_get(&r->headers, "Content-Encoding")), raw.data,
                          raw.len, opts->max_body, &r->body);
         if (err == TC_ERR_DECODE)
             snprintf(r->error_detail, sizeof r->error_detail, "The page's compression is unsupported or corrupt.");

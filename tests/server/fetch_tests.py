@@ -26,6 +26,24 @@ import zlib
 
 TEXT = b"Tachyon: the modern web, sent back to 1995.\n" * 50
 
+# A page for trying the document tree: windows-1252, declared only in a
+# <meta>, with the parser's harder cases (misnested tags, a table with stray
+# text, a template, SVG).
+PAGE = ("""<!DOCTYPE html>
+<html lang="en"><head><meta charset="windows-1252"><title>Tachyon test page \u2013 caf\u00e9</title>
+<style>p { color: navy }</style></head>
+<body class="test">
+<!-- comments stay in the tree -->
+<h1>Hello from the <i>test</i> server</h1>
+<p>Caf\u00e9 cr\u00e8me &amp; caf\u00e9 au lait&nbsp;&euro;5
+<p>Misnested: <b>bold <i>both</b> italic</i>
+<table><tr><td>cell</td></tr>stray text</table>
+<template><li>template content</li></template>
+<svg viewbox="0 0 10 10"><foreignObject><p>HTML in SVG</p></foreignObject><circle r="4"/></svg>
+<ul><li>one<li>two<li>three</ul>
+<script>if (a < b) document.write("not run yet")</script>
+""").encode("windows-1252")
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -78,6 +96,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/slow":
             time.sleep(15)
             self.reply(200, b"finally\n")
+        elif path == "/page":
+            self.reply(200, PAGE, [("Content-Type", "text/html")])
         elif path == "/headers":
             self.reply(200, "".join("%s: %s\n" % kv for kv in self.headers.items()).encode())
         else:
@@ -185,6 +205,7 @@ def main():
 
     if args.serve:
         print("http   %s" % url(http_port, "/", "http"))
+        print("page   %s" % url(http_port, "/page", "http"))
         print("https  %s  (trust %s)" % (url(rsa, "/"), ca))
         print("proxy  127.0.0.1:%d" % proxy, flush=True)
         while True:
@@ -223,6 +244,10 @@ def main():
         ("http through a proxy", ["--proxy", "127.0.0.1:%d" % proxy, url(http_port, "/hello", "http")], True,
          ["Hello from the test server"], []),
         ("unsupported scheme", ["ftp://localhost/"], False, [], ["can't load ftp"]),
+        ("document tree", ["--dom", url(http_port, "/page", "http")], True,
+         ["| <!DOCTYPE html>", '|       "Caf\u00e9 cr\u00e8me & caf\u00e9 au lait\u00a0\u20ac5', "|     <svg svg>",
+          '|       viewBox="0 0 10 10"', "|     <template>", "|       content", '|     "stray text"'],
+         ["windows-1252", "title: Tachyon test page \u2013 caf\u00e9"]),
     ]
 
     failures = 0
