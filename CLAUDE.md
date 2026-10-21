@@ -35,13 +35,16 @@ Use `-DTACHYON_WERROR=ON` before pushing; CI builds with warnings as errors.
 
 ### Releases
 
-Pushing a tag `v<version>` makes CI publish that build as a GitHub
-pre-release with the installer, CD image, floppy image and zip. The tag must
-match `VERSION` in `CMakeLists.txt`, and `docs/releases/<version>.md` holds
-the notes (its first line is the title). Tag only when George asks for a
-release. The installer is built with NSIS from `tools/installer/tachyon.nsi`;
-keep it ANSI (`Unicode false`) and free of plug-ins, so that its only code
-is NSIS's installer stub, which win95check checks.
+A tag `v<version>` makes CI publish that build as a GitHub pre-release
+with the installer, CD image, floppy image and zip. The tag must match
+`VERSION` in `CMakeLists.txt`, and `docs/releases/<version>.md` holds the
+notes (its first line is the title). This container can't push tags, so
+George makes them: with `git push`, or by publishing a release with a new
+tag on GitHub's website, which CI then fills in. Prepare a release only
+when George asks for one. The installer is built with NSIS from
+`tools/installer/tachyon.nsi`; keep it ANSI (`Unicode false`) and free of
+plug-ins, so that its only code is NSIS's installer stub, which win95check
+checks.
 
 ### Seeing the UI
 
