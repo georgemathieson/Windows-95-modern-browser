@@ -10,7 +10,8 @@
 Only `stb_truetype.h` is here. It reads TrueType fonts and rasterises
 glyphs with antialiasing. Tachyon uses it for the fonts Windows 95 already
 has (decision 27); `src/core/tc_font_stb.c` compiles it, with Tachyon's
-configuration.
+configuration: `STBTT_assert` does nothing, and the compiler warnings
+Tachyon turns on are relaxed for that one file.
 
 **No upstream file is modified.**
 

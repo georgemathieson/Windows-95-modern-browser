@@ -56,6 +56,7 @@ add_executable(tachyon_tests
   test_dom.c
   test_encoding.c
   test_fixup.c
+  test_font.c
   test_html.c
   test_log.c
   test_net.c

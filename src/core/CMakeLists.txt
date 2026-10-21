@@ -73,6 +73,8 @@ add_library(tachyon_core STATIC
   tc_err.c
   tc_fetch.c
   tc_fixup.c
+  tc_font.c
+  tc_font_stb.c
   tc_html_parser.c
   tc_html_sniff.c
   tc_html_tokenizer.c
@@ -95,6 +97,7 @@ add_library(tachyon_core STATIC
 )
 target_include_directories(tachyon_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/third_party/stb
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib)
