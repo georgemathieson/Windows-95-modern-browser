@@ -1,15 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(tachyon VERSION 0.0.1 LANGUAGES C)
+project(tachyon VERSION 0.1.0 LANGUAGES C)
 
-set(TACHYON_SPRINT 0)
-set(TACHYON_SPRINT_NAME "Foundations")
+set(TACHYON_SPRINT 1)
+set(TACHYON_SPRINT_NAME "Hello, HTTPS")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(TACHYON_WERROR "Treat compiler warnings as errors" OFF)
+
+# -O2 rather than CMake's -O3: -O3 grows the code a lot for little gain, a bad
+# trade on a Pentium with 8 KB of code cache.
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes)
@@ -18,9 +22,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 if(WIN32)
   enable_language(RC)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   # Oldest CPU the shipped code must run on. Our own code is always compiled
   # for i586 (the original Pentium), but MinGW-w64's prebuilt runtime uses
@@ -71,9 +76,14 @@ endfunction()
 
 enable_testing()
 
+add_subdirectory(third_party/mbedtls)
+add_subdirectory(third_party/zlib)
 add_subdirectory(src/core)
 if(WIN32)
   add_subdirectory(src/platform/win32)
   add_subdirectory(tools/win95exports)
+else()
+  add_subdirectory(src/platform/posix)
 endif()
+add_subdirectory(tools/fetch)
 add_subdirectory(tests)

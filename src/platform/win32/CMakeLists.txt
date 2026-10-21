@@ -1,4 +1,13 @@
+# tc_platform.h for Windows 95: time, threads, entropy, Winsock 1.1.
+add_library(tachyon_platform STATIC
+  tw_platform.c
+  tw_net.c
+)
+target_include_directories(tachyon_platform PUBLIC ${PROJECT_SOURCE_DIR}/src/core)
+target_link_libraries(tachyon_platform PUBLIC wsock32)
+
 add_executable(tachyon WIN32
+  loader.c
   main.c
   shell.c
   view.c
