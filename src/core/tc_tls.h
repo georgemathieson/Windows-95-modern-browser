@@ -14,6 +14,8 @@ int tc_tls_init(void);
 /* Trust extra roots (PEM text): a company proxy's CA, or a test CA. Call
    after tc_tls_init and before any connection. */
 int tc_tls_add_trusted_pem(const char *pem, size_t len);
+/* The same, from a PEM file. */
+int tc_tls_add_trusted_file(const char *path);
 /* How many roots are trusted. */
 int tc_tls_trusted_count(void);
 

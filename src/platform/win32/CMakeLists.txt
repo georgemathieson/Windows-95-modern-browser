@@ -7,6 +7,7 @@ target_include_directories(tachyon_platform PUBLIC ${PROJECT_SOURCE_DIR}/src/cor
 target_link_libraries(tachyon_platform PUBLIC wsock32)
 
 add_executable(tachyon WIN32
+  loader.c
   main.c
   shell.c
   view.c

@@ -47,3 +47,42 @@ jobs:
             dist/*.zip
             dist/*.img
             dist/*.iso
+
+  real-sites:
+    name: Real websites over HTTPS (packaged FETCH.EXE under Wine)
+    needs: win95
+    runs-on: ubuntu-24.04
+    env:
+      WINEDEBUG: -all
+      WINEDLLOVERRIDES: mscoree=;mshtml=
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tachyon-win95
+          path: artifact
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine32:i386 unzip
+      - name: Prepare Wine
+        run: wineboot --init && wineserver --wait
+      - name: Fetch real sites, trusting only Mozilla's roots
+        run: |
+          cd artifact && unzip -q tachyon-*-win95.zip
+          failed=0
+          for url in https://example.com/ \
+                     https://en.wikipedia.org/wiki/Windows_95 \
+                     https://news.ycombinator.com/ \
+                     https://www.google.com/ \
+                     https://github.com/ \
+                     https://www.cloudflare.com/ \
+                     http://neverssl.com/; do
+            ok=0
+            for attempt in 1 2 3; do
+              if wine TACHYON/FETCH.EXE -q "$url"; then ok=1; break; fi
+              sleep 5
+            done
+            if [ "$ok" = 0 ]; then echo "::error::FETCH.EXE could not load $url"; failed=1; fi
+          done
+          exit $failed

@@ -235,6 +235,23 @@ int tc_tls_add_trusted_pem(const char *pem, size_t len)
     return ret < 0 || tls.root_count == before ? TC_ERR_INVALID : TC_OK;
 }
 
+int tc_tls_add_trusted_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    char *pem = NULL;
+    long len;
+    int err = TC_ERR_INVALID;
+
+    if (!f)
+        return TC_ERR_INVALID;
+    if (fseek(f, 0, SEEK_END) == 0 && (len = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 &&
+        (pem = malloc((size_t)len)) != NULL && fread(pem, 1, (size_t)len, f) == (size_t)len)
+        err = tc_tls_add_trusted_pem(pem, (size_t)len);
+    free(pem);
+    fclose(f);
+    return err;
+}
+
 int tc_tls_trusted_count(void)
 {
     return tls.root_count;

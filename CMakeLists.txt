@@ -11,6 +11,10 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(TACHYON_WERROR "Treat compiler warnings as errors" OFF)
 
+# -O2 rather than CMake's -O3: -O3 grows the code a lot for little gain, a bad
+# trade on a Pentium with 8 KB of code cache.
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
+
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes)
   if(TACHYON_WERROR)

@@ -10,5 +10,8 @@
 #define TC_SPRINT         @TACHYON_SPRINT@
 #define TC_SPRINT_NAME    "@TACHYON_SPRINT_NAME@"
 #define TC_HOMEPAGE       "https://github.com/georgemathieson/windows-95-modern-browser"
+/* When this build was configured (Unix time). A clock earlier than this is
+   certainly wrong, which matters because certificates are checked by date. */
+#define TC_BUILD_UNIX     @TACHYON_BUILD_UNIX@LL
 
 #endif

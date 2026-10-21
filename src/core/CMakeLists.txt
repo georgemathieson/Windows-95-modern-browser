@@ -1,3 +1,7 @@
+# Override for reproducible builds (or to test the wrong-clock warning).
+if(NOT DEFINED TACHYON_BUILD_UNIX)
+  string(TIMESTAMP TACHYON_BUILD_UNIX "%s" UTC)
+endif()
 configure_file(tc_version.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_version.h @ONLY)
 
 # Mozilla's root certificates, compiled in.

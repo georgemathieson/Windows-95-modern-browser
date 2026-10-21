@@ -32,34 +32,6 @@ static int usage(void)
     return 1;
 }
 
-static int add_cacert(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    char *pem;
-    long len;
-    int err;
-
-    if (!f) {
-        fprintf(stderr, "fetch: can't open %s\n", path);
-        return TC_ERR_INVALID;
-    }
-    fseek(f, 0, SEEK_END);
-    len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    pem = malloc((size_t)len + 1);
-    if (!pem || fread(pem, 1, (size_t)len, f) != (size_t)len) {
-        fclose(f);
-        free(pem);
-        return TC_ERR_NOMEM;
-    }
-    fclose(f);
-    err = tc_tls_add_trusted_pem(pem, (size_t)len);
-    free(pem);
-    if (err)
-        fprintf(stderr, "fetch: no certificates in %s\n", path);
-    return err;
-}
-
 int main(int argc, char **argv)
 {
     tc_fetch_options opts;
@@ -80,8 +52,10 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "-q") == 0) {
             quiet = 1;
         } else if (strcmp(argv[i], "--cacert") == 0 && i + 1 < argc) {
-            if (add_cacert(argv[++i]))
+            if (tc_tls_add_trusted_file(argv[++i]) != TC_OK) {
+                fprintf(stderr, "fetch: no certificates found in %s\n", argv[i]);
                 return 1;
+            }
         } else if (strcmp(argv[i], "--proxy") == 0 && i + 1 < argc) {
             char *colon;
             snprintf(proxy, sizeof proxy, "%s", argv[++i]);

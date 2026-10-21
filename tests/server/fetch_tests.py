@@ -7,7 +7,8 @@ tool against them and checks what it prints:
   fetch_tests.py --certs DIR -- [wine] path/to/fetch
 
 Everything after "--" is the fetch command (under Wine for Windows builds).
-Python standard library only.
+With --serve instead, it just runs the servers and prints their addresses,
+for trying the browser by hand. Python standard library only.
 """
 
 import argparse
@@ -20,6 +21,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import zlib
 
 TEXT = b"Tachyon: the modern web, sent back to 1995.\n" * 50
@@ -73,6 +75,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, (b"0123456789abcdef" * (n // 16 + 1))[:n])
         elif path.startswith("/status/"):
             self.reply(int(path.rsplit("/", 1)[1]), b"status page\n")
+        elif path == "/slow":
+            time.sleep(15)
+            self.reply(200, b"finally\n")
         elif path == "/headers":
             self.reply(200, "".join("%s: %s\n" % kv for kv in self.headers.items()).encode())
         else:
@@ -159,7 +164,8 @@ def free_port():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--certs", required=True)
-    ap.add_argument("fetch", nargs="+")
+    ap.add_argument("--serve", action="store_true", help="only run the servers")
+    ap.add_argument("fetch", nargs="*")
     args = ap.parse_args()
     fetch = [a for a in args.fetch if a]
     ca = os.path.join(args.certs, "ca.pem")
@@ -176,6 +182,13 @@ def main():
 
     def url(port, path, scheme="https"):
         return "%s://localhost:%d%s" % (scheme, port, path)
+
+    if args.serve:
+        print("http   %s" % url(http_port, "/", "http"))
+        print("https  %s  (trust %s)" % (url(rsa, "/"), ca))
+        print("proxy  127.0.0.1:%d" % proxy, flush=True)
+        while True:
+            time.sleep(3600)
 
     # (name, fetch arguments, expect success, strings stdout must contain,
     #  strings stderr must contain)

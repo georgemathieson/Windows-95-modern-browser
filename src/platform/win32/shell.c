@@ -1,11 +1,16 @@
 #include "shell.h"
 
 #include <commctrl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "loader.h"
 #include "resource.h"
+#include "tc_entropy.h"
 #include "tc_fixup.h"
+#include "tc_url.h"
+#include "tc_utf8.h"
 #include "tc_version.h"
 #include "view.h"
 
@@ -32,6 +37,10 @@ typedef struct shell {
     char *history[HISTORY_MAX];
     int history_len;
     int history_pos; /* index of the current page, -1 when empty */
+
+    tw_load *load;   /* the page being loaded, NULL when idle */
+    const char *proxy_host;
+    uint16_t proxy_port;
 } shell;
 
 static const struct {
@@ -67,31 +76,101 @@ static void set_status(shell *sh, const char *text)
     SendMessageA(sh->status, SB_SETTEXTA, 0, (LPARAM)text);
 }
 
+/* Text from the ANSI world (address bar, command line) as UTF-8. */
+static int ansi_to_utf8(const char *ansi, tc_buf *out)
+{
+    WCHAR wide[2048];
+    int i, n = MultiByteToWideChar(CP_ACP, 0, ansi, -1, wide, TC_ARRAY_LEN(wide));
+    for (i = 0; i < n - 1; i++) {
+        char enc[4];
+        if (tc_buf_append(out, enc, tc_utf8_encode(wide[i], enc)))
+            return TC_ERR_NOMEM;
+    }
+    return n > 0 ? TC_OK : TC_ERR_INVALID;
+}
+
+/* UTF-8 to the ANSI code page, for window titles. */
+static void utf8_to_ansi(const char *utf8, size_t len, char *out, int size)
+{
+    WCHAR wide[512];
+    size_t i = 0;
+    int n = 0;
+    while (i < len && n < (int)TC_ARRAY_LEN(wide) - 1) {
+        uint32_t cp;
+        i += tc_utf8_decode(utf8 + i, len - i, &cp);
+        wide[n++] = (WCHAR)(cp > 0xFFFF ? '?' : cp);
+    }
+    n = WideCharToMultiByte(CP_ACP, 0, wide, n, out, size - 1, NULL, NULL);
+    out[n > 0 ? n : 0] = '\0';
+}
+
+static void set_title(shell *sh, const char *title)
+{
+    char caption[300];
+    snprintf(caption, sizeof caption, "%.200s - %s", title, TC_NAME);
+    SetWindowTextA(sh->hwnd, caption);
+}
+
 static void update_nav_state(shell *sh)
 {
     HMENU menu = GetMenu(sh->hwnd);
     int can_back = sh->history_pos > 0;
     int can_forward = sh->history_pos >= 0 && sh->history_pos < sh->history_len - 1;
+    int loading = sh->load != NULL;
 
     EnableWindow(sh->buttons[0], can_back);
     EnableWindow(sh->buttons[1], can_forward);
-    EnableWindow(sh->buttons[2], FALSE); /* nothing loads in the background yet */
+    EnableWindow(sh->buttons[2], loading);
     EnableMenuItem(menu, IDM_GO_BACK, MF_BYCOMMAND | (can_back ? MF_ENABLED : MF_GRAYED));
     EnableMenuItem(menu, IDM_GO_FORWARD, MF_BYCOMMAND | (can_forward ? MF_ENABLED : MF_GRAYED));
-    EnableMenuItem(menu, IDM_VIEW_STOP, MF_BYCOMMAND | MF_GRAYED);
+    EnableMenuItem(menu, IDM_VIEW_STOP, MF_BYCOMMAND | (loading ? MF_ENABLED : MF_GRAYED));
 }
 
-/* Show the current history entry. */
+/* Abandon the current load. Its WM_TW_DONE still arrives and frees it. */
+static void cancel_load(shell *sh)
+{
+    if (sh->load) {
+        tw_load_cancel(sh->load);
+        sh->load = NULL;
+    }
+}
+
+/* ---- Showing the current history entry ---- */
+
+static void show_about_page(shell *sh, const char *url)
+{
+    if (strcmp(url, "about:tachyon") == 0 || strcmp(url, "about:home") == 0) {
+        tw_view_show_home(sh->view);
+        set_title(sh, "Welcome to Tachyon");
+    } else if (strcmp(url, "about:blank") == 0) {
+        tw_view_show_blank(sh->view);
+        set_title(sh, url);
+    } else {
+        tw_view_show_message(sh->view, url, "Page not found", "Tachyon doesn't have a page with that name.",
+                             "Try about:tachyon.");
+        set_title(sh, url);
+    }
+    set_status(sh, "Done");
+}
+
 static void show_current(shell *sh)
 {
     const char *url = sh->history[sh->history_pos];
-    const char *title = tw_view_show(sh->view, url);
-    char caption[300];
 
+    cancel_load(sh);
     SetWindowTextA(sh->address, url);
-    wsprintfA(caption, "%.200s - %s", title, TC_NAME);
-    SetWindowTextA(sh->hwnd, caption);
-    set_status(sh, "Done");
+    if (strncmp(url, "about:", 6) == 0) {
+        show_about_page(sh, url);
+    } else {
+        sh->load = tw_load_start(sh->hwnd, url, sh->proxy_host, sh->proxy_port);
+        if (sh->load) {
+            tw_view_show_message(sh->view, url, "Loading...", NULL, NULL);
+            set_status(sh, "Starting...");
+        } else {
+            tw_view_show_message(sh->view, url, "Out of memory", "Tachyon couldn't start loading the page.", NULL);
+        }
+        set_title(sh, url);
+    }
     update_nav_state(sh);
 }
 
@@ -116,33 +195,265 @@ static void navigate(shell *sh, const char *url)
     show_current(sh);
 }
 
+/* Turn typed (ANSI) text into a URL and go there. 0 if it isn't one. */
+static int navigate_typed(shell *sh, const char *typed)
+{
+    tc_buf utf8, fixed;
+    tc_url url;
+    int ok = 0;
+
+    tc_buf_init(&utf8);
+    tc_buf_init(&fixed);
+    if (ansi_to_utf8(typed, &utf8) == TC_OK && tc_fixup_address(tc_buf_cstr(&utf8), &fixed) == TC_OK &&
+        tc_url_parse(tc_buf_cstr(&fixed), NULL, &url) == TC_OK) {
+        navigate(sh, url.href);
+        tc_url_free(&url);
+        ok = 1;
+    }
+    tc_buf_free(&utf8);
+    tc_buf_free(&fixed);
+    return ok;
+}
+
 static void go_to_address(shell *sh)
 {
     char typed[2048];
-    tc_buf url;
 
     GetWindowTextA(sh->address, typed, sizeof typed);
-    tc_buf_init(&url);
-    if (tc_fixup_address(typed, &url) == TC_OK) {
-        navigate(sh, tc_buf_cstr(&url));
+    if (navigate_typed(sh, typed)) {
         SetFocus(sh->view);
     } else {
         MessageBeep(MB_ICONEXCLAMATION);
-        set_status(sh, "Type a web address, such as example.com. Searching comes in a later sprint.");
+        set_status(sh, "That isn't a web address. Try one like example.com. (Searching comes in a later sprint.)");
     }
-    tc_buf_free(&url);
 }
+
+/* ---- Load progress and results ---- */
+
+static void on_progress(shell *sh, tw_load *load)
+{
+    char text[400];
+
+    if (load != sh->load)
+        return; /* an abandoned load */
+    switch (load->phase) {
+    case TC_FETCH_RESOLVING:
+        snprintf(text, sizeof text, "Looking up %s...", load->host);
+        break;
+    case TC_FETCH_CONNECTING:
+        snprintf(text, sizeof text, "Connecting to %s...", load->host);
+        break;
+    case TC_FETCH_SECURING:
+        snprintf(text, sizeof text, "Making a secure connection to %s...", load->host);
+        break;
+    case TC_FETCH_WAITING:
+        snprintf(text, sizeof text, "Waiting for %s...", load->host);
+        break;
+    case TC_FETCH_REDIRECTING:
+        snprintf(text, sizeof text, "Redirecting to %s...", load->host);
+        break;
+    case TC_FETCH_RECEIVING:
+        if (load->total > 0)
+            snprintf(text, sizeof text, "Receiving from %s: %u KB of %u KB", load->host,
+                     (unsigned)(load->received / 1024), (unsigned)(load->total / 1024));
+        else
+            snprintf(text, sizeof text, "Receiving from %s: %u KB", load->host, (unsigned)(load->received / 1024));
+        break;
+    default:
+        return;
+    }
+    set_status(sh, text);
+}
+
+static int starts_nocase(const char *s, const char *prefix)
+{
+    for (; *prefix; s++, prefix++)
+        if ((*s >= 'A' && *s <= 'Z' ? *s + 32 : *s) != *prefix)
+            return 0;
+    return 1;
+}
+
+/* The page's <title>, found naively until Tachyon parses HTML (Sprint 2). */
+static int find_title(const tc_buf *body, char *out, int size)
+{
+    const char *s = tc_buf_cstr(body), *start = NULL, *end = NULL;
+    size_t i, n = TC_MIN(body->len, (size_t)65536);
+    char collapsed[600];
+    size_t c = 0;
+
+    for (i = 0; i + 7 < n && !start; i++)
+        if (s[i] == '<' && starts_nocase(s + i + 1, "title") && (s[i + 6] == '>' || s[i + 6] == ' '))
+            start = memchr(s + i, '>', n - i);
+    if (!start)
+        return 0;
+    start++;
+    for (i = (size_t)(start - s); i + 7 < n && !end; i++)
+        if (s[i] == '<' && starts_nocase(s + i, "</title"))
+            end = s + i;
+    if (!end)
+        return 0;
+    /* Collapse whitespace; decode the commonest character references. */
+    while (start < end && c < sizeof collapsed - 1) {
+        static const struct { const char *ref; char ch; } refs[] = {
+            { "&amp;", '&' }, { "&lt;", '<' }, { "&gt;", '>' }, { "&quot;", '"' }, { "&#39;", '\'' },
+        };
+        size_t r;
+        int replaced = 0;
+        if (*start == ' ' || *start == '\n' || *start == '\r' || *start == '\t') {
+            if (c && collapsed[c - 1] != ' ')
+                collapsed[c++] = ' ';
+            start++;
+            continue;
+        }
+        for (r = 0; r < TC_ARRAY_LEN(refs); r++) {
+            size_t len = strlen(refs[r].ref);
+            if ((size_t)(end - start) >= len && memcmp(start, refs[r].ref, len) == 0) {
+                collapsed[c++] = refs[r].ch;
+                start += len;
+                replaced = 1;
+                break;
+            }
+        }
+        if (!replaced)
+            collapsed[c++] = *start++;
+    }
+    while (c && collapsed[c - 1] == ' ')
+        c--;
+    if (!c)
+        return 0;
+    utf8_to_ansi(collapsed, c, out, size);
+    return out[0] != '\0';
+}
+
+static void show_error(shell *sh, tw_load *load)
+{
+    const tc_response *r = &load->response;
+    const char *heading, *text;
+    char detail[512];
+
+    snprintf(detail, sizeof detail, "%s", r->error_detail[0] ? r->error_detail : tc_err_text(load->result));
+    switch (load->result) {
+    case TC_ERR_DNS:
+        heading = "Server not found";
+        text = "Check the address, and that this computer is connected to the internet. Windows 95 needs "
+               "TCP/IP and a network card or Dial-Up Networking set up.";
+        break;
+    case TC_ERR_CONNECT:
+        heading = "Couldn't connect";
+        text = "The server didn't accept the connection. It may be down, or a firewall may be in the way.";
+        break;
+    case TC_ERR_TIMEOUT:
+        heading = "The connection timed out";
+        text = "The server took too long to respond. Try again later.";
+        break;
+    case TC_ERR_CERT: {
+        SYSTEMTIME now;
+        heading = "This connection isn't secure";
+        text = "Tachyon couldn't confirm that this is really the site you asked for, so it won't show the page.";
+        if (r->tls.cert_flags & 0x0201) { /* expired or not yet valid: the clock may be wrong */
+            static const char *months[] = { "January", "February", "March", "April", "May", "June", "July",
+                                            "August", "September", "October", "November", "December" };
+            size_t n = strlen(detail);
+            GetLocalTime(&now);
+            snprintf(detail + n, sizeof detail - n, " Your computer's clock says %d %s %d.", now.wDay,
+                     months[(now.wMonth - 1) % 12], now.wYear);
+        }
+        break;
+    }
+    case TC_ERR_TLS:
+        heading = "Secure connection failed";
+        text = "Tachyon and the server couldn't agree on a secure connection. The server may need an "
+               "encryption method Tachyon doesn't have yet.";
+        break;
+    case TC_ERR_CANCELLED:
+        heading = "Stopped";
+        text = "Loading was stopped. Press Reload to try again.";
+        detail[0] = '\0';
+        break;
+    case TC_ERR_UNSUPPORTED:
+        heading = "Can't open this address";
+        text = NULL;
+        break;
+    case TC_ERR_PROXY:
+        heading = "Proxy error";
+        text = "The proxy server Tachyon was told to use didn't connect it to the site.";
+        break;
+    default:
+        heading = "The page couldn't be loaded";
+        text = NULL;
+        break;
+    }
+    tw_view_show_message(sh->view, r->url ? r->url : load->url, heading, text, detail[0] ? detail : NULL);
+    set_title(sh, heading);
+    set_status(sh, heading);
+}
+
+static void show_response(shell *sh, tw_load *load)
+{
+    const tc_response *r = &load->response;
+    char title[300], status[300];
+    tc_buf head;
+    size_t i;
+
+    /* A redirect lands somewhere else: that is the address now. */
+    if (r->url && strcmp(r->url, sh->history[sh->history_pos]) != 0) {
+        char *final_url = copy_string(r->url);
+        if (final_url) {
+            free(sh->history[sh->history_pos]);
+            sh->history[sh->history_pos] = final_url;
+        }
+    }
+    SetWindowTextA(sh->address, sh->history[sh->history_pos]);
+
+    tc_buf_init(&head);
+    tc_buf_printf(&head, "HTTP/1.%d %d %s\n", r->minor_version, r->status, r->status_text ? r->status_text : "");
+    for (i = 0; i < r->headers.len; i++)
+        tc_buf_printf(&head, "%s: %s\n", r->headers.items[i].name, r->headers.items[i].value);
+    tc_buf_append_char(&head, '\n');
+    tw_view_show_source(sh->view, sh->history[sh->history_pos], tc_buf_cstr(&head), head.len,
+                        tc_buf_cstr(&r->body), r->body.len);
+    tc_buf_free(&head);
+
+    set_title(sh, find_title(&r->body, title, sizeof title) ? title : sh->history[sh->history_pos]);
+    if (r->tls.version[0])
+        snprintf(status, sizeof status, "Done: %u KB in %u.%u s. Secure: %s, %s", (unsigned)(r->body.len / 1024),
+                 (unsigned)(r->elapsed_ms / 1000), (unsigned)(r->elapsed_ms % 1000 / 100), r->tls.version,
+                 r->tls.cipher);
+    else
+        snprintf(status, sizeof status, "Done: %u KB in %u.%u s. Not secure (plain HTTP)",
+                 (unsigned)(r->body.len / 1024), (unsigned)(r->elapsed_ms / 1000),
+                 (unsigned)(r->elapsed_ms % 1000 / 100));
+    set_status(sh, status);
+}
+
+static void on_done(shell *sh, tw_load *load)
+{
+    if (load == sh->load) {
+        sh->load = NULL;
+        if (load->result == TC_OK)
+            show_response(sh, load);
+        else
+            show_error(sh, load);
+        update_nav_state(sh);
+    }
+    tw_load_free(load);
+}
+
+/* ---- Commands ---- */
 
 static void show_about(shell *sh)
 {
     MSGBOXPARAMSA mb;
-    char text[512];
+    char text[1024];
 
-    wsprintfA(text,
-              "%s %s\r\nSprint %d: %s\r\n\r\n"
-              "A modern web browser for Windows 95.\r\n\r\n"
-              "%s\r\nReleased under the GNU General Public License v3.",
-              TC_NAME, TC_VERSION, TC_SPRINT, TC_SPRINT_NAME, TC_HOMEPAGE);
+    snprintf(text, sizeof text,
+             "%s %s\r\nSprint %d: %s\r\n\r\n"
+             "A modern web browser for Windows 95.\r\n\r\n"
+             "Secure connections: Mbed TLS 4.1, %d trusted root certificates.\r\n"
+             "Randomness: %d of 256 bits (%s).\r\n\r\n"
+             "%s\r\nReleased under the GNU General Public License v3.",
+             TC_NAME, TC_VERSION, TC_SPRINT, TC_SPRINT_NAME, tc_tls_trusted_count(), tc_entropy_strength(),
+             tc_entropy_sources(), TC_HOMEPAGE);
     memset(&mb, 0, sizeof mb);
     mb.cbSize = sizeof mb;
     mb.hwndOwner = sh->hwnd;
@@ -186,6 +497,11 @@ static void on_command(shell *sh, int id)
         edit_command(EM_SETSEL, 0, -1);
         break;
     case IDM_VIEW_STOP:
+        if (sh->load) {
+            /* The load reports back as cancelled and shows the Stopped page. */
+            tw_load_cancel(sh->load);
+            set_status(sh, "Stopping...");
+        }
         break;
     case IDM_VIEW_RELOAD:
         if (sh->history_pos >= 0)
@@ -276,6 +592,23 @@ static void layout(shell *sh, int width, int height)
     MoveWindow(sh->view, 0, view_top, width, height - view_top - status_h, TRUE);
 }
 
+/* Certificates can't be checked with a clock set before this build. */
+static void check_clock(shell *sh)
+{
+    if (tc_time_unix() < TC_BUILD_UNIX - 86400) {
+        SYSTEMTIME now;
+        char warning[400];
+        static const char *months[] = { "January", "February", "March", "April", "May", "June", "July",
+                                        "August", "September", "October", "November", "December" };
+        GetLocalTime(&now);
+        snprintf(warning, sizeof warning,
+                 "Your computer's clock says %d %s %d. Secure (https) websites won't open until the date "
+                 "is right: double-click the clock on the taskbar to set it.",
+                 now.wDay, months[(now.wMonth - 1) % 12], now.wYear);
+        tw_view_set_warning(sh->view, warning);
+    }
+}
+
 static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     shell *sh = get_shell(hwnd);
@@ -291,10 +624,20 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
-    if (!sh)
+    if (!sh) {
+        /* A load that outlived the window still has to be freed. */
+        if (msg == WM_TW_DONE)
+            tw_load_free((tw_load *)lp);
         return DefWindowProcA(hwnd, msg, wp, lp);
+    }
 
     switch (msg) {
+    case WM_TW_PROGRESS:
+        on_progress(sh, (tw_load *)lp);
+        return 0;
+    case WM_TW_DONE:
+        on_done(sh, (tw_load *)lp);
+        return 0;
     case WM_SIZE:
         layout(sh, LOWORD(lp), HIWORD(lp));
         return 0;
@@ -322,6 +665,7 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     case WM_DESTROY:
+        cancel_load(sh);
         PostQuitMessage(sh->exit_code);
         return 0;
     case WM_NCDESTROY: {
@@ -351,16 +695,17 @@ int tw_shell_register(HINSTANCE instance)
     return RegisterClassA(&wc) != 0;
 }
 
-HWND tw_shell_create(HINSTANCE instance, const char *start_url, int show, int smoke_test)
+HWND tw_shell_create(HINSTANCE instance, const tw_shell_options *opts)
 {
     shell *sh = calloc(1, sizeof *sh);
     HWND hwnd;
-    tc_buf url;
 
     if (!sh)
         return NULL;
     sh->instance = instance;
     sh->history_pos = -1;
+    sh->proxy_host = opts->proxy_host;
+    sh->proxy_port = opts->proxy_port;
     hwnd = CreateWindowExA(0, TW_SHELL_CLASS, TC_NAME, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                            CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, instance, sh);
     if (!hwnd) {
@@ -368,17 +713,15 @@ HWND tw_shell_create(HINSTANCE instance, const char *start_url, int show, int sm
         return NULL;
     }
 
-    tc_buf_init(&url);
-    if (!start_url || tc_fixup_address(start_url, &url) != TC_OK)
-        tc_buf_append_str(&url, TW_HOME_URL);
-    navigate(sh, tc_buf_cstr(&url));
-    tc_buf_free(&url);
+    check_clock(sh);
+    if (!opts->start_url || !navigate_typed(sh, opts->start_url))
+        navigate(sh, TW_HOME_URL);
 
-    ShowWindow(hwnd, show);
+    ShowWindow(hwnd, opts->show);
     UpdateWindow(hwnd);
     SetFocus(sh->address);
     SendMessageA(sh->address, EM_SETSEL, 0, -1);
-    if (smoke_test)
+    if (opts->smoke_test)
         SetTimer(hwnd, SMOKE_TIMER, SMOKE_MS, NULL);
     return hwnd;
 }
