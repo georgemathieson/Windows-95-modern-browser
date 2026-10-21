@@ -8,18 +8,18 @@
 
 #include "tc_buf.h"
 
-typedef enum tc_encoding {
-    TC_ENCODING_IDENTITY,
-    TC_ENCODING_GZIP,
-    TC_ENCODING_DEFLATE,
-    TC_ENCODING_UNKNOWN
-} tc_encoding;
+typedef enum tc_content_coding {
+    TC_CODING_IDENTITY,
+    TC_CODING_GZIP,
+    TC_CODING_DEFLATE,
+    TC_CODING_UNKNOWN
+} tc_content_coding;
 
-/* Map a Content-Encoding header value (may be NULL) to an encoding. */
-tc_encoding tc_encoding_from_header(const char *value);
+/* Map a Content-Encoding header value (may be NULL) to a coding. */
+tc_content_coding tc_content_coding_from_header(const char *value);
 
 /* Decode all of in into out (appending). TC_ERR_DECODE for corrupt data,
    TC_ERR_TOO_LARGE if the output would pass max_out bytes. */
-int tc_inflate(tc_encoding encoding, const void *in, size_t len, size_t max_out, tc_buf *out);
+int tc_inflate(tc_content_coding coding, const void *in, size_t len, size_t max_out, tc_buf *out);
 
 #endif

@@ -203,17 +203,17 @@ static void test_inflate_formats(void)
 {
     tc_buf out;
     tc_buf_init(&out);
-    TC_CHECK_INT(tc_inflate(TC_ENCODING_GZIP, gzip_text, sizeof gzip_text, 1 << 20, &out), TC_OK);
+    TC_CHECK_INT(tc_inflate(TC_CODING_GZIP, gzip_text, sizeof gzip_text, 1 << 20, &out), TC_OK);
     TC_CHECK(text_matches(&out));
     tc_buf_clear(&out);
-    TC_CHECK_INT(tc_inflate(TC_ENCODING_DEFLATE, zlib_text, sizeof zlib_text, 1 << 20, &out), TC_OK);
+    TC_CHECK_INT(tc_inflate(TC_CODING_DEFLATE, zlib_text, sizeof zlib_text, 1 << 20, &out), TC_OK);
     TC_CHECK(text_matches(&out));
     tc_buf_clear(&out);
     /* "deflate" that is really raw deflate, as some servers send. */
-    TC_CHECK_INT(tc_inflate(TC_ENCODING_DEFLATE, raw_deflate_text, sizeof raw_deflate_text, 1 << 20, &out), TC_OK);
+    TC_CHECK_INT(tc_inflate(TC_CODING_DEFLATE, raw_deflate_text, sizeof raw_deflate_text, 1 << 20, &out), TC_OK);
     TC_CHECK(text_matches(&out));
     tc_buf_clear(&out);
-    TC_CHECK_INT(tc_inflate(TC_ENCODING_GZIP, gzip_two_members, sizeof gzip_two_members, 1 << 20, &out), TC_OK);
+    TC_CHECK_INT(tc_inflate(TC_CODING_GZIP, gzip_two_members, sizeof gzip_two_members, 1 << 20, &out), TC_OK);
     TC_CHECK_STR(tc_buf_cstr(&out), "first member, second member");
     tc_buf_free(&out);
 }
@@ -223,12 +223,12 @@ static void test_inflate_limits_and_errors(void)
     tc_buf out;
     static const unsigned char junk[] = { 0x1f, 0x8b, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef, 0x00, 0x03, 0xff, 0xff };
     tc_buf_init(&out);
-    TC_CHECK_INT(tc_inflate(TC_ENCODING_GZIP, gzip_text, sizeof gzip_text, 100, &out), TC_ERR_TOO_LARGE);
+    TC_CHECK_INT(tc_inflate(TC_CODING_GZIP, gzip_text, sizeof gzip_text, 100, &out), TC_ERR_TOO_LARGE);
     tc_buf_clear(&out);
-    TC_CHECK_INT(tc_inflate(TC_ENCODING_GZIP, junk, sizeof junk, 1 << 20, &out), TC_ERR_DECODE);
-    TC_CHECK_INT(tc_encoding_from_header("GZIP"), TC_ENCODING_GZIP);
-    TC_CHECK_INT(tc_encoding_from_header(" br"), TC_ENCODING_UNKNOWN);
-    TC_CHECK_INT(tc_encoding_from_header(NULL), TC_ENCODING_IDENTITY);
+    TC_CHECK_INT(tc_inflate(TC_CODING_GZIP, junk, sizeof junk, 1 << 20, &out), TC_ERR_DECODE);
+    TC_CHECK_INT(tc_content_coding_from_header("GZIP"), TC_CODING_GZIP);
+    TC_CHECK_INT(tc_content_coding_from_header(" br"), TC_CODING_UNKNOWN);
+    TC_CHECK_INT(tc_content_coding_from_header(NULL), TC_CODING_IDENTITY);
     tc_buf_free(&out);
 }
 

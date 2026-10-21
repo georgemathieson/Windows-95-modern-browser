@@ -1,0 +1,21 @@
+# HTML parser tests Tachyon is known to fail, with the reason after '#'.
+# Ids are "file:N" (plus the tokenizer state, or " script" for tree tests
+# run with scripting on). See tools/gen_html_tests.py.
+
+# html5lib-tests' domjs.test still expects "unexpected-question-mark-instead-of-tag-name",
+# the error from before HTML had processing instructions (test2.test has the new rules).
+domjs.test:1 Data state # stale error code: <? now starts a processing instruction
+domjs.test:2 Data state # stale error code: <? now starts a processing instruction
+domjs.test:3 Data state # stale error code: <? now starts a processing instruction
+
+# <selectedcontent> copies the selected <option>'s content when the parser
+# pops the option. That needs the select/option selectedness model, which
+# comes with form controls (Sprint 6).
+webkit02.dat:45 # selectedcontent mirroring (Sprint 6)
+webkit02.dat:45 script # selectedcontent mirroring (Sprint 6)
+webkit02.dat:46 # selectedcontent mirroring (Sprint 6)
+webkit02.dat:46 script # selectedcontent mirroring (Sprint 6)
+webkit02.dat:47 # selectedcontent mirroring (Sprint 6)
+webkit02.dat:47 script # selectedcontent mirroring (Sprint 6)
+webkit02.dat:48 # selectedcontent mirroring (Sprint 6)
+webkit02.dat:48 script # selectedcontent mirroring (Sprint 6)

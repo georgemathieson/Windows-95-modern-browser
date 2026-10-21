@@ -41,6 +41,7 @@ int tc_buf_reserve(tc_buf *b, size_t extra)
     p = realloc(b->data, cap);
     if (!p)
         return TC_ERR_NOMEM;
+    p[b->len] = '\0';
     b->data = p;
     b->cap = cap;
     return TC_OK;
