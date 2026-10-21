@@ -48,6 +48,8 @@ does not remember anything between sessions; this board does.
 - [x] The parser survives fuzzing under AddressSanitizer and UBSan (CI fuzzes on every push) and limits nesting depth (decision 22)
 - [ ] Pulled forward from Sprint 9 at George's request: a GitHub release, Tachyon 0.2.0, with a Windows 95 installer (decision 25)
 - [x] **George sees a page's DOM tree in Tachyon on Windows 95** (the demo): Google's, on Windows 95 C with a Pentium Pro and 128 MB, installed with `SETUP.EXE` from a CI build
+- [ ] Scrolling a big document tree (Wikipedia's) doesn't crash on Windows 95. George's test found an invalid page fault in KERNEL32 that Wine doesn't show
+- [x] Pulled forward from Sprint 9 at George's suggestion: a log, `TACHYON.LOG`, with crash reports (decision 26)
 - [x] Carried over from Sprint 1: HTTPS works on Windows 95, and the About box's "Randomness" line reads 256 of 256 bits. The status bar timings weren't reported; they move to the backlog's TLS measurement
 
 ## Upcoming sprints
@@ -95,7 +97,7 @@ Positioning, floats, stacking contexts, overflow, flexbox, grid, media queries, 
 ### Sprint 9: Installer and first public alpha
 
 **Goal:** install Tachyon from a floppy or CD on a fresh Windows 95 and browse.
-Grow the test builds' installer (NSIS, since Sprint 2: decision 25) into the alpha's, or replace it: the Windows 95 wizard style, installing from floppies, settings (home page, proxy, extra certificate authorities), bookmarks, crash logs and the first release that isn't a pre-release. Needs the period-correct toolchain from the backlog first.
+Grow the test builds' installer (NSIS, since Sprint 2: decision 25) into the alpha's, or replace it: the Windows 95 wizard style, installing from floppies, settings (home page, proxy, extra certificate authorities), bookmarks, and the first release that isn't a pre-release. Crash reports already exist (decision 26); the alpha may want a way to send them. Needs the period-correct toolchain from the backlog first.
 
 ## Backlog
 
@@ -155,6 +157,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 23 | A `<meta charset>` found while parsing restarts the parse in the new encoding | The whole page is in memory, so parsing it again is simple and always correct; switching decoders mid-stream isn't | Sprint 2 |
 | 24 | The document tree view hides whitespace-only text nodes | Every DOM inspector does; `FETCH --dom` shows them all | Sprint 2 |
 | 25 | Test builds become GitHub pre-releases with an installer, pulled forward from Sprint 9. CI publishes one when a `v<version>` tag is pushed. The installer is built with NSIS 3: an ANSI build with the classic interface and no plug-ins | George tests on Windows 95 from a release. NSIS's ANSI installers still support Windows 95, and its stub passes win95check once OLE32 and eight functions Windows 95 has are listed (three are NT security stubs that NSIS only calls before restarting the PC). Whether the alpha writes its own installer is Sprint 9's call | Sprint 2 |
+| 26 | A log, `TACHYON.LOG` next to `TACHYON.EXE`, with a crash report appended when Tachyon crashes. Pulled forward from Sprint 9 at George's suggestion | The first crash on real Windows 95 doesn't happen under Wine, and Windows' own dialog shows only registers. The report adds the code addresses on the stack (named from each build's symbols file) and the last 64 log and trace lines, down to the tree rows being drawn. It formats with static buffers and no printf, because a crash can leave little stack. Kept under 48 KB so that Windows 95's Notepad can open it | Sprint 2 |
 
 ## Risks
 
@@ -180,6 +183,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Parsing GitHub's 572 KB home page takes 5 to 7 ms and about 2 MB on the build machine. Timing it showed that `GetTickCount` only moves every 55 ms on Windows 95 (and coarsely under Wine), so `tc_time_ms` now uses the performance counter, which Windows 95 runs off the 1.19 MHz timer chip.
 - George asked for a release with an installer to test from, so the basics of Sprint 9 came forward (decision 25). `SETUP.EXE` is 639 KB with everything in it. It installs to `C:\Program Files\Tachyon` with Start menu and desktop shortcuts and an Add/Remove Programs entry. CI installs and uninstalls it under Wine on every push, and publishes a pre-release when a version tag is pushed.
 - The parser and browser were merged as PR #3 before the installer was done. The installer and releases followed in a pull request of their own, so the sprint stays open until George has run the demo from the first release.
+- **The first crash on Windows 95:** scrolling Wikipedia's document tree ends in "an invalid page fault in module KERNEL32.DLL", with the stack pointer outside the thread's own stack (in Windows 95's shared memory, where its 16-bit parts run). Wine never shows it. George suggested a logger, so Tachyon now keeps `TACHYON.LOG` with crash reports (decision 26), and the next test build should say which row was being drawn.
 - **The first run on Windows 95:** George installed Tachyon with `SETUP.EXE` and loaded Google over HTTPS on Windows 95 C (4.00.950 C) with a Pentium Pro and 128 MB. That also covers Sprint 1's demo. The About box reported 256 of 256 bits of randomness. The installer starting at all shows that its imports exist on Windows 95 C; the original release is still unchecked.
 
 ### Sprint 1: Hello, HTTPS (2026-10-21, merged as PR #2)

@@ -30,7 +30,7 @@ wine "$dir/FETCH.EXE" >/dev/null 2>&1 || status=$?
 [ "$status" = 1 ] || fail "the installed FETCH.EXE doesn't run (exit status $status)"
 
 # Files Tachyon creates for itself must go too.
-touch "$dir/TACHYON.RND"
+touch "$dir/TACHYON.RND" "$dir/TACHYON.LOG" "$dir/TACHYON.OLD"
 wine "$dir/UNINSTAL.EXE" /S
 wineserver -w
 [ ! -e "$dir" ] || fail "the uninstaller left $dir: $(ls "$dir")"

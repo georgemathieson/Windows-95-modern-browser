@@ -26,6 +26,7 @@ void tc_suite_dom(void);
 void tc_suite_encoding(void);
 void tc_suite_fixup(void);
 void tc_suite_html(void);
+void tc_suite_log(void);
 void tc_suite_net(void);
 void tc_suite_platform(void);
 void tc_suite_sha256(void);
@@ -40,6 +41,7 @@ int main(void)
     tc_suite_encoding();
     tc_suite_fixup();
     tc_suite_html();
+    tc_suite_log();
     tc_suite_net();
     tc_suite_platform();
     tc_suite_sha256();

@@ -8,6 +8,8 @@
 #   tachyon-VERSION-win95.zip   everything, for copying into a VM or machine
 #   tachyon-VERSION-win95.img   a 1.44 MB floppy image: the browser (needs mtools)
 #   tachyon-VERSION-win95.iso   a CD-ROM image with everything and SETUP.EXE (needs genisoimage)
+#   tachyon-VERSION-win95-symbols.txt  TACHYON.EXE's function addresses, for reading
+#                               crash reports with tools/symbolize.py
 #
 # The packaged programs are stripped; the build directory keeps the symbols
 # for reading crash addresses.
@@ -18,12 +20,14 @@ out=${2:-dist}
 root=$(cd "$(dirname "$0")/.." && pwd)
 strip=${STRIP:-i686-w64-mingw32-strip}
 objdump=${OBJDUMP:-i686-w64-mingw32-objdump}
+nm=${NM:-i686-w64-mingw32-nm}
 version_h="$build/src/core/generated/tc_version.h"
 
 [ -f "$build/src/platform/win32/TACHYON.exe" ] || { echo "package.sh: build the win95 preset first" >&2; exit 1; }
 version=$(sed -n 's/^#define TC_VERSION *"\(.*\)"/\1/p' "$version_h")
 sprint=$(sed -n 's/^#define TC_SPRINT *\([0-9]*\)/\1/p' "$version_h")
 sprint_name=$(sed -n 's/^#define TC_SPRINT_NAME *"\(.*\)"/\1/p' "$version_h")
+commit=$(sed -n 's/^#define TC_BUILD_COMMIT *"\(.*\)"/\1/p' "$version_h")
 isa=$(sed -n 's/^TACHYON_ISA_FLOOR:[A-Z]*=//p' "$build/CMakeCache.txt")
 name="tachyon-$version-win95"
 
@@ -71,6 +75,12 @@ FETCH.EXE (on the CD and in the zip)
   -i shows the response headers; -q hides the page; --dom prints the
   page's document tree instead, with a summary of the parse.
 
+IF TACHYON CRASHES
+  Tachyon keeps a log, TACHYON.LOG, next to TACHYON.EXE, and writes a
+  report into it when it crashes. Help > View Log opens it in Notepad.
+  Please send it to us, or a photo of the end of it, and say what you
+  were doing.
+
 HELPING TEST
   EXPORTS.EXE writes EXPORTS.TXT, a list of the functions your copy of
   Windows provides. Sending it to us helps check that Tachyon only uses
@@ -83,8 +93,15 @@ Tachyon is free software under the GNU General Public License v3
 (see LICENSE.TXT).
 TXT
 
-rm -f "$out/$name-setup.exe" "$out/$name.zip" "$out/$name.img" "$out/$name.iso"
+rm -f "$out/$name-setup.exe" "$out/$name.zip" "$out/$name.img" "$out/$name.iso" "$out/$name-symbols.txt"
 (cd "$out" && zip -q -r "$name.zip" TACHYON)
+
+# The packaged TACHYON.EXE is stripped; crash reports give addresses that
+# this file turns back into function names.
+{
+  echo "# Tachyon $version, build $commit: nm -n TACHYON.EXE (see tools/symbolize.py)"
+  "$nm" -n --defined-only "$build/src/platform/win32/TACHYON.exe"
+} > "$out/$name-symbols.txt"
 
 # The installer gets the same Windows 95 check as everything we build.
 if command -v makensis >/dev/null 2>&1; then

@@ -106,8 +106,11 @@ done:
 FunctionEnd
 
 Section "Uninstall"
-  ; Files Tachyon makes for itself: the randomness seed, and EXPORTS.EXE's list.
+  ; Files Tachyon makes for itself: the randomness seed, its log, and
+  ; EXPORTS.EXE's list.
   Delete "$INSTDIR\TACHYON.RND"
+  Delete "$INSTDIR\TACHYON.LOG"
+  Delete "$INSTDIR\TACHYON.OLD"
   Delete "$INSTDIR\EXPORTS.TXT"
   Delete "$INSTDIR\TACHYON.EXE"
   Delete "$INSTDIR\FETCH.EXE"

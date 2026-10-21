@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "tc_base.h"
+#include "tw_log.h"
 
 #define TW_SHELL_CLASS "TachyonFrame"
 #define TW_HOME_URL    "about:tachyon"
@@ -16,6 +17,7 @@ typedef struct tw_shell_options {
     int smoke_test;         /* close after a moment, exiting with 0 if the page painted */
     const char *proxy_host; /* an HTTP proxy, or NULL; must outlive the window */
     uint16_t proxy_port;
+    tw_last_run last_run;   /* a crash last time gets a note on the home page */
 } tw_shell_options;
 
 int tw_shell_register(HINSTANCE instance);

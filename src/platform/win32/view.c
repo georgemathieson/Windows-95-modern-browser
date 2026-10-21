@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_log.h"
 #include "tc_outline.h"
 #include "tc_surface.h"
 #include "tc_utf8.h"
@@ -290,6 +291,7 @@ static void scroll_to(view *v, int line)
     int max = total_lines(v) - visible_lines(v);
     line = TC_CLAMP(line, 0, TC_MAX(max, 0));
     if (line != v->top_line) {
+        tc_trace("scroll %d -> %d", v->top_line, line);
         v->top_line = line;
         update_scrollbar(v);
         InvalidateRect(v->hwnd, NULL, FALSE);
@@ -406,12 +408,31 @@ static void paint_message(view *v, tc_surface *s)
         text_block(v, v->font_small, RGB(96, 96, 96), &r, v->detail);
 }
 
+/* A source line for the log: ASCII, with \uXXXX for anything else. */
+static const char *wide_ascii(char *out, size_t cap, const WCHAR *s, size_t len)
+{
+    size_t i, n = 0;
+    for (i = 0; i < len && n + 7 < cap; i++) {
+        if (s[i] >= 0x20 && s[i] < 0x7F)
+            out[n++] = (char)s[i];
+        else
+            n += (size_t)snprintf(out + n, cap - n, "\\u%04X", (unsigned)s[i]);
+    }
+    out[n] = '\0';
+    return out;
+}
+
 static void paint_source(view *v)
 {
     int i, y = SOURCE_MARGIN, rows = visible_lines(v) + 1;
+    char ascii[100];
+
+    tc_trace("paint source: lines %d+%d of %u, %dx%d", v->top_line, rows, (unsigned)v->source.nlines, v->width,
+             v->height);
     SelectObject(v->dc, v->font_mono);
     for (i = 0; i < rows && (size_t)(v->top_line + i) < v->source.nlines; i++) {
         const vline *line = &v->source.lines[v->top_line + i];
+        tc_trace("line %d: %s", v->top_line + i, wide_ascii(ascii, sizeof ascii, v->source.text + line->start, line->len));
         SetTextColor(v->dc, line->start < v->source.head_len ? RGB(0, 0, 128) : RGB(0, 0, 0));
         TextOutW(v->dc, SOURCE_MARGIN, y, v->source.text + line->start, (int)line->len);
         y += v->line_height;
@@ -472,7 +493,10 @@ static void paint_tree(view *v, tc_surface *s)
 {
     int i, rows = visible_lines(v) + 1, top = info_height(v) + SOURCE_MARGIN;
     WCHAR wide[TC_OUTLINE_MAX_TEXT + 8];
+    char ascii[100];
 
+    tc_trace("paint tree: rows %d+%d of %u, %dx%d", v->top_line, rows, (unsigned)v->outline.count, v->width,
+             v->height);
     /* Pixels first, then GDI's text on top. */
     tc_surface_fill(s, tc_rect_make(0, 0, s->width, info_height(v) - 1), TC_RGB(232, 232, 232));
     tc_surface_fill(s, tc_rect_make(0, info_height(v) - 1, s->width, 1), TC_RGB(160, 160, 160));
@@ -497,6 +521,7 @@ static void paint_tree(view *v, tc_surface *s)
         size_t k;
         if (tc_outline_row_text(&v->outline, (size_t)(v->top_line + i), &v->row_text) != TC_OK)
             continue;
+        tc_trace("row %d: %s", v->top_line + i, tc_log_ascii(ascii, sizeof ascii, t->text.data, t->text.len));
         for (k = 0; k < t->nspans && x < v->width; k++) {
             size_t start = t->span_start[k];
             size_t end = k + 1 < t->nspans ? t->span_start[k + 1] : t->text.len;
@@ -603,6 +628,7 @@ static void set_expanded(view *v, int row, int expanded)
     if (row < 0 || (size_t)row >= v->outline.count || !v->outline.rows[row].expandable ||
         v->outline.rows[row].expanded == expanded)
         return;
+    tc_trace("%s row %d", expanded ? "open" : "close", row);
     tc_outline_set_expanded(&v->outline, (size_t)row, expanded);
     v->selected = selected ? (int)tc_outline_find(&v->outline, selected) : -1;
     scroll_to(v, v->top_line); /* clamps to the new length */
@@ -920,6 +946,7 @@ static void build_info(view *v)
     snprintf(v->info, sizeof v->info, "Document tree: %s elements, %s text nodes; %s (%s); %s",
              elements, texts, tc_encoding_name(v->document.encoding), encoding_source_text(v->document.encoding_source),
              mode);
+    tc_log("%s; depth %u, %u tree rows", v->info, (unsigned)stats.max_depth, (unsigned)v->outline.count);
     if (!tc_encoding_supported(v->document.encoding)) {
         n = strlen(v->info);
         snprintf(v->info + n, sizeof v->info - n, ". Tachyon can't decode %s yet, so some text will look wrong.",

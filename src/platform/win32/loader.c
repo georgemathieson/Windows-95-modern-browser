@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "tc_http.h"
+#include "tc_log.h"
 #include "tc_mime.h"
 
 typedef struct start_args {
@@ -45,12 +46,16 @@ static void parse_page(tw_load *load)
         return;
     load->parsing = 1;
     PostMessageA(load->notify, WM_TW_PROGRESS, 0, (LPARAM)load);
+    tc_log("loader: parsing %u KB", (unsigned)(body->len / 1024));
     start = tc_time_ms();
     if (tc_html_parse_page(body->data, body->len, mime.charset, NULL, &load->page) != TC_OK) {
+        tc_log("loader: out of memory parsing");
         tc_html_page_free(&load->page);
         return;
     }
     load->parse_ms = tc_time_ms() - start;
+    tc_log("loader: parsed in %u ms, %u KB of memory", (unsigned)load->parse_ms,
+           (unsigned)((load->page.doc->arena.total + load->page.text.cap) / 1024));
     load->is_html = 1;
     tc_buf_free(body);
 }
@@ -67,8 +72,11 @@ static void load_thread(void *arg)
     opts.cancel = &load->cancel;
     opts.progress = on_progress;
     opts.progress_ctx = load;
+    tc_log("loader: fetching %.120s", load->url);
     load->result = tc_fetch(load->url, &opts, &load->response);
     load->body_len = load->response.body.len;
+    tc_log("loader: %s, %u bytes", load->result == TC_OK ? "fetched" : tc_err_text(load->result),
+           (unsigned)load->body_len);
     if (load->result == TC_OK && !load->cancel)
         parse_page(load);
     free(args->proxy_host);

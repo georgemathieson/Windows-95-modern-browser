@@ -9,6 +9,7 @@
 #include "resource.h"
 #include "tc_entropy.h"
 #include "tc_fixup.h"
+#include "tc_log.h"
 #include "tc_url.h"
 #include "tc_utf8.h"
 #include "tc_version.h"
@@ -42,6 +43,7 @@ typedef struct shell {
     int show_source; /* show pages' source instead of their document tree */
     const char *proxy_host;
     uint16_t proxy_port;
+    tw_last_run last_run;
 } shell;
 
 static const struct {
@@ -159,6 +161,7 @@ static void show_current(shell *sh)
     const char *url = sh->history[sh->history_pos];
 
     cancel_load(sh);
+    tc_log("open %.130s", url);
     SetWindowTextA(sh->address, url);
     if (strncmp(url, "about:", 6) == 0) {
         show_about_page(sh, url);
@@ -343,6 +346,7 @@ static void show_error(shell *sh, tw_load *load)
         text = NULL;
         break;
     }
+    tc_log("failed: %s (%s); %.90s", heading, tc_err_text(load->result), detail);
     tw_view_show_message(sh->view, r->url ? r->url : load->url, heading, text, detail[0] ? detail : NULL);
     set_title(sh, heading);
     set_status(sh, heading);
@@ -352,6 +356,7 @@ static void show_response(shell *sh, tw_load *load)
 {
     const tc_response *r = &load->response;
     char title[300], status[300];
+    MEMORYSTATUS mem;
     tc_buf head;
     size_t i;
     int n;
@@ -393,6 +398,9 @@ static void show_response(shell *sh, tw_load *load)
     else
         snprintf(status + n, sizeof status - (size_t)n, ". Not secure (plain HTTP)");
     set_status(sh, status);
+    mem.dwLength = sizeof mem;
+    GlobalMemoryStatus(&mem);
+    tc_log("HTTP %d. %s; %lu MB RAM free", r->status, status, (unsigned long)(mem.dwAvailPhys >> 20));
 }
 
 static void on_done(shell *sh, tw_load *load)
@@ -447,6 +455,7 @@ static void edit_command(UINT message, WPARAM wp, LPARAM lp)
 static void set_show_source(shell *sh, int show_source)
 {
     sh->show_source = show_source;
+    tc_log("view: %s", show_source ? "page source" : "document tree");
     CheckMenuRadioItem(GetMenu(sh->hwnd), IDM_VIEW_TREE, IDM_VIEW_SOURCE, show_source ? IDM_VIEW_SOURCE : IDM_VIEW_TREE,
                        MF_BYCOMMAND);
     if (!tw_view_set_show_source(sh->view, show_source))
@@ -510,6 +519,9 @@ static void on_command(shell *sh, int id)
         break;
     case IDM_GO_ADDRESS:
         go_to_address(sh);
+        break;
+    case IDM_HELP_LOG:
+        tw_log_view(sh->hwnd);
         break;
     case IDM_HELP_ABOUT:
         show_about(sh);
@@ -578,21 +590,32 @@ static void layout(shell *sh, int width, int height)
     MoveWindow(sh->view, 0, view_top, width, height - view_top - status_h, TRUE);
 }
 
-/* Certificates can't be checked with a clock set before this build. */
-static void check_clock(shell *sh)
+/* The home page's warnings: a clock set before this build (certificates
+   can't be checked) and a crash last time. */
+static void show_warnings(shell *sh)
 {
+    char warning[500];
+    size_t n = 0;
+
+    warning[0] = '\0';
     if (tc_time_unix() < TC_BUILD_UNIX - 86400) {
         SYSTEMTIME now;
-        char warning[400];
         static const char *months[] = { "January", "February", "March", "April", "May", "June", "July",
                                         "August", "September", "October", "November", "December" };
         GetLocalTime(&now);
-        snprintf(warning, sizeof warning,
-                 "Your computer's clock says %d %s %d. Secure (https) websites won't open until the date "
-                 "is right: double-click the clock on the taskbar to set it.",
-                 now.wDay, months[(now.wMonth - 1) % 12], now.wYear);
-        tw_view_set_warning(sh->view, warning);
+        n += (size_t)snprintf(warning, sizeof warning,
+                              "Your computer's clock says %d %s %d. Secure (https) websites won't open until the "
+                              "date is right: double-click the clock on the taskbar to set it. ",
+                              now.wDay, months[(now.wMonth - 1) % 12], now.wYear);
+        tc_log("the clock is before this build");
     }
+    if (n < sizeof warning && (sh->last_run == TW_LAST_RUN_CRASHED || sh->last_run == TW_LAST_RUN_UNCLEAN))
+        snprintf(warning + n, sizeof warning - n, "%s Help > View Log shows what it was doing: please send us "
+                 "TACHYON.LOG, or a photo of the end of it.",
+                 sh->last_run == TW_LAST_RUN_CRASHED ? "Tachyon crashed the last time it ran."
+                                                     : "Tachyon didn't close properly the last time it ran.");
+    if (warning[0])
+        tw_view_set_warning(sh->view, warning);
 }
 
 static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -650,6 +673,11 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DestroyWindow(hwnd);
         }
         return 0;
+    case WM_ENDSESSION:
+        /* Windows is shutting down and won't return to the message loop. */
+        if (wp)
+            tw_log_stop();
+        return 0;
     case WM_DESTROY:
         cancel_load(sh);
         PostQuitMessage(sh->exit_code);
@@ -692,6 +720,7 @@ HWND tw_shell_create(HINSTANCE instance, const tw_shell_options *opts)
     sh->history_pos = -1;
     sh->proxy_host = opts->proxy_host;
     sh->proxy_port = opts->proxy_port;
+    sh->last_run = opts->last_run;
     hwnd = CreateWindowExA(0, TW_SHELL_CLASS, TC_NAME, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                            CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, instance, sh);
     if (!hwnd) {
@@ -699,7 +728,7 @@ HWND tw_shell_create(HINSTANCE instance, const tw_shell_options *opts)
         return NULL;
     }
 
-    check_clock(sh);
+    show_warnings(sh);
     CheckMenuRadioItem(GetMenu(hwnd), IDM_VIEW_TREE, IDM_VIEW_SOURCE, IDM_VIEW_TREE, MF_BYCOMMAND);
     if (!opts->start_url || !navigate_typed(sh, opts->start_url))
         navigate(sh, TW_HOME_URL);

@@ -36,6 +36,8 @@ BEGIN
     END
     POPUP "&Help"
     BEGIN
+        MENUITEM "View &Log",                   IDM_HELP_LOG
+        MENUITEM SEPARATOR
         MENUITEM "&About Tachyon",              IDM_HELP_ABOUT
     END
 END

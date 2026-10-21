@@ -2,6 +2,14 @@
 if(NOT DEFINED TACHYON_BUILD_UNIX)
   string(TIMESTAMP TACHYON_BUILD_UNIX "%s" UTC)
 endif()
+if(NOT DEFINED TACHYON_BUILD_COMMIT)
+  execute_process(COMMAND git rev-parse --short=10 HEAD
+                  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+                  OUTPUT_VARIABLE TACHYON_BUILD_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(NOT TACHYON_BUILD_COMMIT)
+    set(TACHYON_BUILD_COMMIT unknown)
+  endif()
+endif()
 configure_file(tc_version.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_version.h @ONLY)
 
 # Mozilla's root certificates, compiled in.
@@ -55,6 +63,7 @@ add_library(tachyon_core STATIC
   tc_html_tokenizer.c
   tc_http.c
   tc_inflate.c
+  tc_log.c
   tc_mime.c
   tc_outline.c
   tc_sha256.c

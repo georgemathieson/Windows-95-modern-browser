@@ -41,6 +41,7 @@ add_executable(tachyon_tests
   test_encoding.c
   test_fixup.c
   test_html.c
+  test_log.c
   test_net.c
   test_platform.c
   test_sha256.c
