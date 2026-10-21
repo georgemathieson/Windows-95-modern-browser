@@ -55,9 +55,10 @@ static int print_dom(const tc_response *r, int quiet)
     tc_dom_count(&page.doc->node, &stats);
     tc_buf_clear(&out);
     tc_document_title(page.doc, &out);
-    fprintf(stderr, "fetch: parsed %u elements, %u text nodes, %u comments, depth %u, in %u ms; %s%s%s; title: %s\n",
+    fprintf(stderr,
+            "fetch: parsed %u elements, %u text nodes, %u comments, depth %u, in %u ms, %u KB; %s%s%s; title: %s\n",
             (unsigned)stats.elements, (unsigned)stats.texts, (unsigned)stats.comments, (unsigned)stats.max_depth,
-            (unsigned)ms, tc_encoding_name(page.encoding), tc_encoding_supported(page.encoding) ? "" : " (not decoded)",
+            (unsigned)ms, (unsigned)((page.doc->arena.total + page.text.cap) / 1024), tc_encoding_name(page.encoding), tc_encoding_supported(page.encoding) ? "" : " (not decoded)",
             page.doc->mode == TC_QUIRKS ? ", quirks mode" : page.doc->mode == TC_LIMITED_QUIRKS ? ", limited quirks" : "",
             tc_buf_cstr(&out));
     tc_buf_free(&out);

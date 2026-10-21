@@ -23,7 +23,7 @@ only when George asks.
 # One-time setup in a fresh Ubuntu 24.04 container
 dpkg --add-architecture i386 && apt-get update
 apt-get install -y cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb xauth \
-    zip unzip mtools genisoimage x11-apps imagemagick xdotool
+    zip unzip mtools genisoimage x11-apps imagemagick xdotool clang libclang-rt-18-dev
 
 cmake --preset host  && cmake --build --preset host  && ctest --preset host
 cmake --preset win95 && cmake --build --preset win95 && xvfb-run -a ctest --preset win95
@@ -64,6 +64,22 @@ Outbound connections go through an egress gateway that re-signs TLS with its
 own CA, and only some hosts are allowed. So Tachyon (correctly) refuses real
 sites here unless told `--cacert /root/.ccr/ca-bundle.crt`, and most hosts
 are blocked anyway. CI's real-sites job tests against real certificates.
+
+### The HTML parser's tests
+
+`tests/data` holds html5lib-tests' tokenizer and encoding tests and
+web-platform-tests' tree-construction `.dat` files, compiled into the unit
+tests by `tools/gen_html_tests.py`. Every case must pass unless
+`tests/data/html_known_failures.txt` lists it with a reason; a listed case
+that starts passing fails the run, so remove it from the list. To see a
+tree, `tachyon-fetch --dom URL` prints any page's in the tests' format. The
+parser follows the HTML Standard's text: its source is the `whatwg/html`
+repository's `source` file (clone it with `add_repo`; the parsing chapter
+starts at `id="parsing"`).
+
+`tools/fuzz.sh [SECONDS]` fuzzes the parser with libFuzzer, AddressSanitizer
+and UBSan (`apt-get install clang libclang-rt-18-dev`). Run it after
+changing the tokenizer or tree builder; crashes land in `build/fuzz/crashes`.
 
 ### Windows-only code paths
 

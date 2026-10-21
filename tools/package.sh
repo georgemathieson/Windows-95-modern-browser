@@ -48,15 +48,19 @@ RUNNING
 
 WHAT WORKS IN THIS BUILD
   Tachyon fetches pages over HTTP and HTTPS (TLS 1.2 and 1.3, checked
-  against Mozilla's trusted certificate authorities) and shows their
-  source. It can't draw web pages yet: that arrives in Sprint 3.
+  against Mozilla's trusted certificate authorities), parses their HTML
+  the way today's browsers do, and shows the result as a document tree.
+  Click a [+] (or use the arrow keys) to open an element; Ctrl+U shows the
+  page's source instead. It can't draw web pages yet: that arrives in
+  Sprint 3.
 
   Options: TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE.PEM]
 
 FETCH.EXE (on the CD and in the zip)
   Downloads a page from an MS-DOS Prompt, for testing:
     FETCH -i https://example.com
-  -i shows the response headers; -q hides the page.
+  -i shows the response headers; -q hides the page; --dom prints the
+  page's document tree instead, with a summary of the parse.
 
 HELPING TEST
   EXPORTS.EXE writes EXPORTS.TXT, a list of the functions your copy of

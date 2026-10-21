@@ -13,15 +13,22 @@ piece will live. It changes as the sprints land.
  |  src/platform/posix   the same platform functions for Linux     |
  +-----------------------------------------------------------------+
  |  src/core             the engine: portable C99, no OS headers   |
+ |    tc_html_parser     tree construction; page and fragment      |
+ |                       parsing entry points                      |
+ |    tc_html_tokenizer  the HTML tokenizer (+ tc_entities)        |
+ |    tc_html_sniff      finding a page's encoding                 |
+ |    tc_encoding        WHATWG encodings: labels, decoders        |
+ |    tc_dom             the document tree, in an arena            |
+ |    tc_outline         the tree as DOM-inspector rows            |
  |    tc_url             WHATWG URL parsing                        |
  |    tc_fetch           a load: DNS, connect, proxy, TLS,         |
  |                       request, response, redirects, decoding    |
- |    tc_http            HTTP/1.1 messages, no I/O                 |
+ |    tc_http, tc_mime   HTTP/1.1 messages and MIME types, no I/O  |
  |    tc_tls             Mbed TLS glue, root certificates          |
  |    tc_inflate         gzip and deflate                          |
  |    tc_entropy         the entropy pool (own SHA-256)            |
  |    tc_surface         32-bit pixels                             |
- |    next: html, dom (Sprint 2); css, layout, paint (Sprint 3)    |
+ |    next: css, layout, paint (Sprint 3)                          |
  +-----------------------------------------------------------------+
  |  third_party          Mbed TLS 4.1, zlib; QuickJS-ng (Sprint 5) |
  +-----------------------------------------------------------------+
@@ -35,9 +42,10 @@ piece will live. It changes as the sprints land.
   `0x00RRGGBB`), which on Windows wraps a DIB section, so a frame reaches the
   screen with one `BitBlt`. This gives the same output on every Windows
   version and on the host, where reference tests will render pages to PNG.
-- **Text.** Until Sprint 3 the view uses GDI: `TextOutW` for page source (one
-  of the few Unicode functions that works on Windows 95) and ANSI text
-  elsewhere. From Sprint 3, Tachyon rasterises bundled fonts itself.
+- **Text.** Until Sprint 3 the view uses GDI: `TextOutW` for page source and
+  the document tree (one of the few Unicode functions that works on
+  Windows 95) and ANSI text elsewhere. From Sprint 3, Tachyon rasterises
+  bundled fonts itself.
 
 ## Loading a page
 
@@ -48,9 +56,14 @@ piece will live. It changes as the sprints land.
          tc_net_resolve -> tc_net_connect -> [proxy CONNECT] -> tc_tls_connect
          -> tc_http request -> tc_http_response_feed ... -> redirects?
          -> tc_inflate
+       then, for HTML (tc_mime_wants_html), tc_html_parse_page():
+         tc_html_sniff (BOM, HTTP charset, <meta> prescan) -> tc_decode
+         -> tokenizer <-> tree builder -> tc_document
+         (a <meta> naming another encoding restarts the parse once)
        posts WM_TW_PROGRESS (throttled) and one WM_TW_DONE to the window
    |
-   +-- WM_TW_DONE: show the source, or an error page; free the load
+   +-- WM_TW_DONE: the view takes over the document and shows its tree
+       (tc_outline) or its source, or an error page; free the load
 ```
 
 Every blocking network call waits in 200 ms slices and checks the load's
@@ -58,6 +71,33 @@ cancel flag, so Stop works quickly. Only the DNS lookup (`gethostbyname`)
 can't be interrupted; an abandoned load finishes in the background and its
 result is thrown away. A load is only ever freed by its `WM_TW_DONE`
 handler, so the worker never touches freed memory.
+
+## The HTML parser
+
+The parser follows the HTML Standard's algorithms step by step (the
+tokenizer's states, the tree builder's insertion modes), so the standard
+and the test suites are its specification.
+
+- **Input** is the page decoded to UTF-8 with newlines normalized. The
+  tokenizer works on that buffer directly and copies runs of plain text in
+  one go; it only decodes characters where the rules look at them.
+- **Pull, not push.** The tree builder asks the tokenizer for one token at
+  a time, because it switches the tokenizer's state after some start tags
+  (`<script>`, `<title>`, `<plaintext>`...). Adjacent characters come as one
+  token, and every insertion mode handles a run of characters, not one
+  character at a time.
+- **Tags are numbers.** Known element names become `tc_tag` values once, so
+  the tree builder compares integers. Unknown names stay strings.
+- **The DOM** lives in a per-document arena (`tc_arena`): no malloc per
+  node, and the whole page is freed at once. Nothing walks the tree
+  recursively, and the parser caps nesting at 400 levels, so a hostile page
+  can't overflow the stack.
+- **Testing.** html5lib-tests (tokenizer, encoding) and web-platform-tests
+  (tree construction) are compiled into the unit tests as C tables, and run
+  natively and under Wine. `tests/data/html_known_failures.txt` lists the
+  few known failures with reasons; one that starts passing fails the run.
+  `tests/fuzz` fuzzes the whole pipeline with libFuzzer, AddressSanitizer
+  and UBSan, locally (`tools/fuzz.sh`) and in CI.
 
 ## Threads
 
@@ -88,12 +128,14 @@ cmake/toolchain-win95.cmake         MinGW-w64 cross toolchain, Wine as test runn
 src/core/                           portable engine
 src/platform/win32/                 Windows 95: TACHYON.EXE and tc_platform.h
 src/platform/posix/                 Linux: tc_platform.h for tests and tools
-third_party/                        Mbed TLS, zlib, root certificates (each with README.tachyon.md)
-tests/                              unit tests (host and Wine), WPT data, test server
+third_party/                        Mbed TLS, zlib, root certificates, WHATWG encoding data and
+                                    character references (each with README.tachyon.md)
+tests/                              unit tests (host and Wine), conformance suites, test server, fuzzer
 tools/fetch/                        FETCH.EXE / tachyon-fetch
 tools/win95check/                   import and instruction checker, export lists
 tools/win95exports/                 EXPORTS.EXE: dumps real Windows 95 exports
-tools/gen_*.py                      build-time generators (icon, root certificates, URL tests)
+tools/gen_*.py                      build-time generators (icon, root certificates, encodings,
+                                    character references, URL and HTML tests, fuzz corpus)
 tools/package.sh                    zip, floppy image and ISO for testers
 docs/                               sprint board, testing guide, spikes
 ```

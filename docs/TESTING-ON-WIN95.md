@@ -51,24 +51,35 @@ is wrong.
 
 We can't distribute Windows 95. You need your own copy.
 
-## 4. This sprint's test (Sprint 1: Hello, HTTPS)
+## 4. This sprint's test (Sprint 2: HTML5 parser and DOM)
+
+It includes Sprint 1's test, which hasn't been run on Windows 95 yet.
 
 1. In Windows 95, check that networking works: **Start > Run**, `winipcfg`
    should show an IP address. Set the date and time to today's.
 2. Start `TACHYON.EXE`. If the home page shows a yellow warning about the
    clock, fix the clock first.
-3. Type `example.com` and press Enter. You should see `HTTP/1.1 200 OK`,
-   the headers in blue, and the page's HTML below them. The status bar says
-   how long it took and which TLS version was used.
-4. Try `en.wikipedia.org` and `news.ycombinator.com`. Scroll with Page Down,
-   the scroll bar or the mouse wheel. Press Back.
-5. Load a page and press **Stop** (or Esc) while it loads.
-6. Open **Help > About Tachyon** and note the "Randomness" line.
-7. Optional: open an MS-DOS Prompt on the CD or zip copy and run
-   `FETCH -i https://example.com`.
+3. Type `example.com` and press Enter. You should see the page's
+   **document tree**: `<!DOCTYPE html>`, `<html>`, a closed `<head>` and an
+   open `<body>`, in colour, with a grey line above it giving the number of
+   elements and the encoding. The window title should be "Example Domain".
+4. Click the **[+]** next to `<head>` to open it, and click it again to
+   close it. Then try the keyboard: Up and Down move the selection, Left and
+   Right close and open, Enter toggles.
+5. Press **Ctrl+U**: the page's source appears (the response headers in
+   blue). Press Ctrl+U again for the tree. **View > Document Tree** and
+   **View > Page Source** do the same.
+6. Try `en.wikipedia.org/wiki/Windows_95` and `news.ycombinator.com`.
+   Scroll with Page Down, the scroll bar or the mouse wheel. Press Back.
+7. Load a page and press **Stop** (or Esc) while it loads.
+8. Open **Help > About Tachyon** and note the "Randomness" line.
+9. Optional: open an MS-DOS Prompt on the CD or zip copy and run
+   `FETCH --dom -q https://example.com`, which prints a one-line summary of
+   the parse.
 
-Please report the status bar's "Done: ... in N s" for each site (it tells us
-how fast TLS is on your hardware) and the About box's "Randomness" line.
+Please report, for each site, the status bar's "Done: N KB in N s, read in
+N s" (the first time tells us how fast TLS is on your hardware, "read in"
+how fast the parser is) and the About box's "Randomness" line.
 
 ## 5. What to report
 

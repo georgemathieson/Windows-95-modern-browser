@@ -48,8 +48,23 @@ jobs:
             dist/*.img
             dist/*.iso
 
+  fuzz:
+    name: Fuzz the HTML parser (libFuzzer, ASan, UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang and its runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build clang libclang-rt-18-dev
+      - name: Fuzz for three minutes
+        run: tools/fuzz.sh 180 2
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-crashes
+          path: build/fuzz/crashes/
+
   real-sites:
-    name: Real websites over HTTPS (packaged FETCH.EXE under Wine)
+    name: Real websites over HTTPS, parsed (packaged FETCH.EXE under Wine)
     needs: win95
     runs-on: ubuntu-24.04
     env:
@@ -67,7 +82,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends wine wine32:i386 unzip
       - name: Prepare Wine
         run: wineboot --init && wineserver --wait
-      - name: Fetch real sites, trusting only Mozilla's roots
+      - name: Fetch and parse real sites, trusting only Mozilla's roots
         run: |
           cd artifact && unzip -q tachyon-*-win95.zip
           failed=0
@@ -77,10 +92,12 @@ jobs:
                      https://www.google.com/ \
                      https://github.com/ \
                      https://www.cloudflare.com/ \
+                     https://www.bbc.co.uk/news \
+                     https://www.yahoo.co.jp/ \
                      http://neverssl.com/; do
             ok=0
             for attempt in 1 2 3; do
-              if wine TACHYON/FETCH.EXE -q "$url"; then ok=1; break; fi
+              if wine TACHYON/FETCH.EXE -q --dom "$url"; then ok=1; break; fi
               sleep 5
             done
             if [ "$ok" = 0 ]; then echo "::error::FETCH.EXE could not load $url"; failed=1; fi
