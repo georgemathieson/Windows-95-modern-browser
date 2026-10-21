@@ -61,6 +61,7 @@ add_executable(tachyon_tests
   test_net.c
   test_platform.c
   test_selector.c
+  test_style.c
   test_sha256.c
   test_surface.c
   test_url.c

@@ -44,7 +44,8 @@ typedef struct tc_match_context {
 } tc_match_context;
 
 /* Parse a selector list. forgiving: drop invalid selectors instead of
-   failing the whole list (as :is() and :where() do). */
+   failing the whole list (as :is() and :where() do). The selectors live in
+   the arena and don't point into the component values. */
 int tc_selectors_parse(tc_arena *a, const tc_css_value *values, uint32_t count, int forgiving,
                        tc_selector_list *out);
 
@@ -61,6 +62,13 @@ typedef enum tc_selector_key_type {
 } tc_selector_key_type;
 
 tc_selector_key_type tc_selector_key(const tc_selector *s, const char **name);
+
+/* For an ancestor filter: hashes of the ids, classes and tag names the
+   selector needs its subject's ancestors to have (at most max), and the
+   hash itself (kind: TC_KEY_*; fold: lower-case ASCII first, for quirks-mode
+   ids and classes; tag names are always lower case). */
+uint32_t tc_selector_ancestor_hashes(const tc_selector *s, int fold, uint32_t *out, uint32_t max);
+uint32_t tc_selector_hash(int kind, const char *name, size_t len, int fold);
 
 /* The element as selectors see it. */
 const tc_element *tc_element_parent(const tc_element *el);

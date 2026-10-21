@@ -54,7 +54,8 @@ typedef enum pseudo_class {
     PC_READ_ONLY,
     PC_READ_WRITE,
     PC_PLACEHOLDER_SHOWN,
-    PC_OPEN
+    PC_OPEN,
+    PC_HEADING         /* :heading and :heading(levels): a bitmask of levels in a */
 } pseudo_class;
 
 /* Combinators: how a compound relates to the one on its left. */
@@ -174,7 +175,7 @@ static const struct {
     { "checked", PC_CHECKED }, { "default", PC_NEVER }, { "defined", PC_ALWAYS }, { "disabled", PC_DISABLED },
     { "empty", PC_EMPTY }, { "enabled", PC_ENABLED }, { "first-child", PC_FIRST_CHILD },
     { "first-of-type", PC_FIRST_OF_TYPE }, { "focus", PC_NEVER }, { "focus-visible", PC_NEVER },
-    { "focus-within", PC_NEVER }, { "fullscreen", PC_NEVER }, { "hover", PC_NEVER },
+    { "focus-within", PC_NEVER }, { "fullscreen", PC_NEVER }, { "heading", PC_HEADING }, { "hover", PC_NEVER },
     { "in-range", PC_ALWAYS }, { "indeterminate", PC_NEVER }, { "invalid", PC_NEVER },
     { "last-child", PC_LAST_CHILD }, { "last-of-type", PC_LAST_OF_TYPE }, { "link", PC_LINK },
     { "modal", PC_NEVER }, { "only-child", PC_ONLY_CHILD }, { "only-of-type", PC_ONLY_OF_TYPE },
@@ -218,6 +219,7 @@ static int parse_pseudo_class(parser *p, simple *s)
         for (i = 0; i < TC_ARRAY_LEN(pseudo_classes); i++)
             if (tc_css_ascii_ieq(v->text, pseudo_classes[i].name)) {
                 s->pc = pseudo_classes[i].pc;
+                s->a = s->pc == PC_HEADING ? ~0 : 0;
                 return 1;
             }
         return 0;
@@ -246,6 +248,27 @@ static int parse_pseudo_class(parser *p, simple *s)
     if (tc_css_ascii_ieq(v->text, "nth-of-type") || tc_css_ascii_ieq(v->text, "nth-last-of-type")) {
         s->pc = tc_css_ascii_ieq(v->text, "nth-of-type") ? PC_NTH_OF_TYPE : PC_NTH_LAST_OF_TYPE;
         return parse_nth(p, v, 0, s);
+    }
+    if (tc_css_ascii_ieq(v->text, "heading")) {
+        /* A comma-separated list of levels. */
+        uint32_t k;
+        int want = 1;
+        s->pc = PC_HEADING;
+        for (k = 0; k < v->nitems; k++) {
+            const tc_css_value *arg = &v->items[k];
+            if (arg->type == TC_CSS_WHITESPACE)
+                continue;
+            if (want && arg->type == TC_CSS_NUMBER && (arg->flags & TC_CSS_INTEGER)) {
+                if (arg->number >= 1 && arg->number <= 30)
+                    s->a |= 1 << (int)arg->number;
+                want = 0;
+            } else if (!want && arg->type == TC_CSS_COMMA) {
+                want = 1;
+            } else {
+                return 0;
+            }
+        }
+        return !want;
     }
     if (tc_css_ascii_ieq(v->text, "lang") || tc_css_ascii_ieq(v->text, "dir")) {
         uint32_t k;
@@ -326,8 +349,10 @@ static int parse_attribute(parser *p, const tc_css_value *block, simple *s)
     v = peek(&q);
     if (!v || (v->type != TC_CSS_IDENT && v->type != TC_CSS_STRING))
         return 0;
-    s->value = v->text;
     s->value_len = strlen(v->text);
+    s->value = tc_arena_strndup(p->arena, v->text, s->value_len);
+    if (!s->value)
+        return 0;
     q.i++;
     skip_ws(&q);
     v = peek(&q);
@@ -377,9 +402,9 @@ static int parse_compound(parser *p, tc_compound *out, uint8_t *pseudo)
         memset(&s, 0, sizeof s);
         if (name->type == TC_CSS_IDENT) {
             s.type = S_TYPE;
-            s.name = name->text;
+            s.name = tc_arena_strndup(p->arena, name->text, strlen(name->text));
             s.lower = lower_copy(p->arena, name->text);
-            if (!s.lower) {
+            if (!s.name || !s.lower) {
                 ok = 0;
                 goto done;
             }
@@ -405,8 +430,12 @@ static int parse_compound(parser *p, tc_compound *out, uint8_t *pseudo)
                 break;
             }
             s.type = S_ID;
-            s.name = v->text;
             s.name_len = strlen(v->text);
+            s.name = tc_arena_strndup(p->arena, v->text, s.name_len);
+            if (!s.name) {
+                ok = 0;
+                break;
+            }
             p->i++;
         } else if (tc_css_is_delim(v, '.')) {
             p->i++;
@@ -416,8 +445,12 @@ static int parse_compound(parser *p, tc_compound *out, uint8_t *pseudo)
                 break;
             }
             s.type = S_CLASS;
-            s.name = v->text;
             s.name_len = strlen(v->text);
+            s.name = tc_arena_strndup(p->arena, v->text, s.name_len);
+            if (!s.name) {
+                ok = 0;
+                break;
+            }
             p->i++;
         } else if (v->type == TC_CSS_BLOCK && v->cp == '[') {
             p->i++;
@@ -674,6 +707,41 @@ int tc_selectors_parse(tc_arena *a, const tc_css_value *values, uint32_t count, 
         return TC_ERR_INVALID;
     *out = *list;
     return TC_OK;
+}
+
+uint32_t tc_selector_hash(int kind, const char *name, size_t len, int fold)
+{
+    uint32_t h = 2166136261u ^ (uint32_t)kind;
+    size_t i;
+    for (i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char)name[i];
+        if (fold && ch >= 'A' && ch <= 'Z')
+            ch = (unsigned char)(ch + 32);
+        h = (h ^ ch) * 16777619u;
+    }
+    return h;
+}
+
+uint32_t tc_selector_ancestor_hashes(const tc_selector *s, int fold, uint32_t *out, uint32_t max)
+{
+    uint32_t i, k, n = 0;
+    /* A compound is an ancestor's when a descendant or child combinator
+       joins it to the compound on its right. */
+    for (i = 1; i < s->ncompounds && n < max; i++) {
+        const tc_compound *c = &s->compounds[i];
+        if (s->compounds[i - 1].combinator != C_DESCENDANT && s->compounds[i - 1].combinator != C_CHILD)
+            continue;
+        for (k = 0; k < c->count && n < max; k++) {
+            const simple *x = &c->simples[k];
+            if (x->type == S_ID)
+                out[n++] = tc_selector_hash(TC_KEY_ID, x->name, x->name_len, fold);
+            else if (x->type == S_CLASS)
+                out[n++] = tc_selector_hash(TC_KEY_CLASS, x->name, x->name_len, fold);
+            else if (x->type == S_TYPE)
+                out[n++] = tc_selector_hash(TC_KEY_TAG, x->lower, x->name_len, 0);
+        }
+    }
+    return n;
 }
 
 tc_selector_key_type tc_selector_key(const tc_selector *s, const char **name)
@@ -1002,6 +1070,9 @@ static int match_pseudo(const simple *s, const tc_element *el, const tc_match_co
     case PC_OPEN:
         return is_html(el) && (el->node.tag == TC_TAG_DETAILS || el->node.tag == TC_TAG_DIALOG) &&
                tc_dom_get_attr(el, "open");
+    case PC_HEADING:
+        return is_html(el) && el->node.tag >= TC_TAG_H1 && el->node.tag <= TC_TAG_H6 &&
+               (s->a & 1 << (el->node.tag - TC_TAG_H1 + 1)) != 0;
     }
     return 0;
 }

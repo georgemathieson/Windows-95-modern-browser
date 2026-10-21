@@ -46,10 +46,22 @@ add_custom_command(
   COMMENT "Compiling HTML character references"
   VERBATIM)
 
+# The user-agent style sheets.
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_ua_css.c
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_ua_css.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/ua.css ${CMAKE_CURRENT_SOURCE_DIR}/ua-quirks.css
+          ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_ua_css.c
+  DEPENDS ${PROJECT_SOURCE_DIR}/tools/gen_ua_css.py ${CMAKE_CURRENT_SOURCE_DIR}/ua.css
+          ${CMAKE_CURRENT_SOURCE_DIR}/ua-quirks.css
+  COMMENT "Compiling the user-agent style sheets"
+  VERBATIM)
+
 add_library(tachyon_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_cacerts.c
   ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_encoding_data.c
   ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_entities.c
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_ua_css.c
   tc_arena.c
   tc_buf.c
   tc_css_color.c
@@ -71,6 +83,9 @@ add_library(tachyon_core STATIC
   tc_outline.c
   tc_selector.c
   tc_sha256.c
+  tc_style.c
+  tc_style_props.c
+  tc_style_sheet.c
   tc_surface.c
   tc_tags.c
   tc_tls.c

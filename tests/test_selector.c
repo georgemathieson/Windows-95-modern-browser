@@ -98,6 +98,9 @@ static void test_matching(void)
         { "p:first-of-type", "p" },
         { "li:nth-of-type(3)", "li" },
         { ":root", "html" },
+        { ":heading", "h2" },
+        { ":heading(1, 2)", "h2" },
+        { ":heading(3)", "" },
         { "div:target", "div" },
         { "foreignObject", "foreignObject" },
         { "foreignobject", "" },         /* SVG names are case-sensitive */
@@ -127,7 +130,7 @@ static void test_invalid(void)
 {
     static const char *const cases[] = {
         "p:foo", "::-webkit-scrollbar", "a < b", "p..x", "#1", "[a~b]", "p,", "", ":not()", "a::before b",
-        "svg|rect", ":nth-child(x)", "[a='b' x]", ":-moz-focusring",
+        "svg|rect", ":nth-child(x)", "[a='b' x]", ":-moz-focusring", ":heading()", ":heading(1,)",
     };
     tc_arena a;
     tc_selector_list list;

@@ -33,6 +33,7 @@ void tc_suite_net(void);
 void tc_suite_platform(void);
 void tc_suite_selector(void);
 void tc_suite_sha256(void);
+void tc_suite_style(void);
 void tc_suite_surface(void);
 void tc_suite_url(void);
 
@@ -51,6 +52,7 @@ int main(void)
     tc_suite_platform();
     tc_suite_selector();
     tc_suite_sha256();
+    tc_suite_style();
     tc_suite_surface();
     tc_suite_url();
     printf("%d checks, %d failed\n", tc_test_checks, tc_test_failures);
