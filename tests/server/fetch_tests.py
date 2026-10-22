@@ -18,6 +18,7 @@ import os
 import socket
 import socketserver
 import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -48,6 +49,20 @@ PAGE = ("""<!DOCTYPE html>
 STYLED = (b'<!DOCTYPE html><title>Styled</title><link rel="stylesheet" href="style.css">'
           b'<link rel="stylesheet" href="/missing.css"><h1>Styled</h1><p>A paragraph with '
           b'<a href="/hello">a link</a>.</p><ul><li>one<li>two</ul>')
+
+
+PICTURES = (b'<!DOCTYPE html><title>Pictures</title><style>body { background: url(/dot.png) }</style>'
+            b'<p><img src="/dot.png" alt="a dot"> <img srcset="/missing.png 1x" alt="missing">'
+            b' <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=" alt="inline">')
+
+
+def tiny_png():
+    """A 2x2 red PNG."""
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    raw = b"".join(b"\0" + b"\xff\0\0" * 2 for _ in range(2))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 LONG = (b'<!DOCTYPE html><title>A long page</title><p><a href="#end">Jump to the end</a></p>' +
@@ -113,6 +128,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, STYLED, [("Content-Type", "text/html; charset=utf-8")])
         elif path == "/long":
             self.reply(200, LONG, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/pictures":
+            self.reply(200, PICTURES, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/dot.png":
+            self.reply(200, tiny_png(), [("Content-Type", "image/png")])
         elif path == "/style.css":
             self.reply(200, b'@import "more.css"; p { color: navy }', [("Content-Type", "text/css")])
         elif path == "/more.css":
@@ -269,6 +288,8 @@ def main():
          ["2 connections opened, 2 reused"]),
         ("render", ["--render", url(http_port, "/styled", "http")], True, [],
          ["2 style sheets (1 failed)", "rendered 800x", "1 connections opened, 3 reused"]),
+        ("pictures", ["--render", url(http_port, "/pictures", "http")], True, [],
+         ["3 images (1 failed)", "1 connections opened, 2 reused"]),
         ("document tree", ["--dom", url(http_port, "/page", "http")], True,
          ["| <!DOCTYPE html>", '|       "Caf\u00e9 cr\u00e8me & caf\u00e9 au lait\u00a0\u20ac5', "|     <svg svg>",
           '|       viewBox="0 0 10 10"', "|     <template>", "|       content", '|     "stray text"'],
