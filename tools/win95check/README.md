@@ -13,7 +13,9 @@ fails if anything wouldn't work on Windows 95:
 - a subsystem or OS version above 4.0, or a non-i386 image
 - with `--objdump`, any instruction newer than the CPU floor (`--isa i586`
   for the original Pentium, `i686` for the Pentium Pro), and any MMX or SSE
-  register
+  register. The constructor and destructor lists MinGW puts in `.text` are
+  pointers, not code, and aren't checked: their bytes can disassemble as
+  anything
 
 The build runs it after linking every executable and again from `ctest`.
 
