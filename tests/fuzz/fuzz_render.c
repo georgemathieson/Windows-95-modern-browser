@@ -38,6 +38,11 @@ static const char fixed_page[] =
     "linear-gradient(45deg, red, blue 40%, lime)'>tiled</div>"
     "<div hidden>hidden</div><span dir=rtl>\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D</span> caf\xC3\xA9 \xE2\x80\x94 "
     "\xF0\x9F\x98\x80<details><summary>s</summary>d</details><svg><circle/></svg>"
+    "<svg width=20 height=10 viewBox='0 0 4 2'><defs><linearGradient id=g x2=1><stop offset=0 stop-color=red />"
+    "<stop offset=1 stop-color=blue /></linearGradient></defs><path d='M0 0 L4 2 Q 2 0 0 2 Z' fill='url(#g)' "
+    "stroke=currentColor stroke-width=.5 transform='rotate(10 2 1)'/></svg>"
+    "<img src=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='4'><circle cx='4' "
+    "cy='2' r='2' fill='teal'/></svg>\">"
     "<p lang=ja>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x80\x8C\xE4\xB8\xAD\xE3\x80\x8D\xE3\x80\x82"
     "<b>\xE3\x81\x82</b>\xE2\x98\x83</p>"
     "</body></html>";

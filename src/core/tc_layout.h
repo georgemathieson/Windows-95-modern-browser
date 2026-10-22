@@ -96,8 +96,9 @@ typedef struct tc_image_source {
     tc_image *(*url)(void *ctx, const tc_css_image *ref);
     /* An image's pixels to draw, decoded now if they need to be (NULL if
        they can't be). where: the part of the document it covers that's
-       being painted, so animations know where to paint again. */
-    const tc_surface *(*pixels)(void *ctx, tc_image *img, tc_rect where);
+       being painted, so animations know where to paint again; w x h: the
+       size it's drawn at, so SVG pictures can be drawn for it. */
+    const tc_surface *(*pixels)(void *ctx, tc_image *img, tc_rect where, int w, int h);
     void *ctx;
 } tc_image_source;
 

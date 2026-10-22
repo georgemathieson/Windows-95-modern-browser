@@ -42,7 +42,7 @@ static void fill(painter *p, int x, int y, int w, int h, uint32_t argb)
 /* An image's pixels to draw, decoded on demand by the image source. where:
    the part of the surface it covers, which may be more than the clip (an
    animation's next frame must cover all of it). */
-static const tc_surface *image_pixels(painter *p, tc_image *img, tc_rect where)
+static const tc_surface *image_pixels(painter *p, tc_image *img, tc_rect where, int w, int h)
 {
     const tc_image_source *src = &p->l->images;
     if (!img || !src->pixels)
@@ -50,7 +50,7 @@ static const tc_surface *image_pixels(painter *p, tc_image *img, tc_rect where)
     where = tc_rect_intersect(where, tc_rect_make(0, 0, p->s->width, p->s->height));
     where.x += p->sx;
     where.y += p->sy;
-    return src->pixels(src->ctx, img, where);
+    return src->pixels(src->ctx, img, where, w, h);
 }
 
 static tc_image *url_image(painter *p, const tc_css_image *ref)
@@ -255,7 +255,7 @@ static void paint_layer(painter *p, const tc_bg_layer *l, float ax, float ay, fl
             where.x = px(ox), where.w = px(ox + tw) - where.x;
         if (l->repeat_y == TC_BG_NO_REPEAT)
             where.y = px(oy), where.h = px(oy + th) - where.y;
-        if (!(pix = image_pixels(p, img, tc_rect_intersect(where, paint))))
+        if (!(pix = image_pixels(p, img, tc_rect_intersect(where, paint), px(tw), px(th))))
             return;
     }
     for (ty = y0; ty < y1 && tiles < MAX_TILES; ty += th + gapy)
@@ -420,7 +420,7 @@ static void paint_marker(painter *p, const tc_box *b, float x, float y)
             /* Its own size, sitting on the baseline, a gap before the text. */
             int iw = tc_image_width(img), ih = tc_image_height(img), ix = px(mx - fs * 0.4f) - iw;
             int iy = px(base) - ih;
-            const tc_surface *pix = image_pixels(p, img, tc_rect_make(ix, iy, iw, ih));
+            const tc_surface *pix = image_pixels(p, img, tc_rect_make(ix, iy, iw, ih), iw, ih);
             if (pix) {
                 tc_surface_draw_image(p->s, p->clip, pix, tc_rect_make(ix, iy, iw, ih));
                 return;
@@ -505,7 +505,7 @@ static void paint_replaced(painter *p, const tc_box *b, float x, float y)
             dx = cx + tc_length_resolve(&s->object_position[0], cw - dw);
             dy = cy + tc_length_resolve(&s->object_position[1], ch - dh);
             dst = tc_rect_make(px(dx), px(dy), px(dx + dw) - px(dx), px(dy + dh) - px(dy));
-            pix = image_pixels(p, img, tc_rect_intersect(dst, tc_rect_make(x0, y0, w, h)));
+            pix = image_pixels(p, img, tc_rect_intersect(dst, tc_rect_make(x0, y0, w, h)), dst.w, dst.h);
             if (pix) {
                 tc_surface_draw_image(p->s, tc_rect_intersect(p->clip, tc_rect_make(x0, y0, w, h)), pix, dst);
                 break;

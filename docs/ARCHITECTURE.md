@@ -44,10 +44,12 @@ piece will live. It changes as the sprints land.
  |                       animation frames                          |
  |    tc_surface, tc_png 32-bit pixels, and PNG files of them      |
  |    tc_dither          dithering to a 256-colour palette         |
+ |    tc_svg             SVG pictures through NanoSVG              |
  |    tc_log             the log and its ring of recent lines      |
- |    next: SVG and web fonts (Sprint 4), JavaScript (Sprint 5)    |
+ |    next: web fonts (Sprint 4), JavaScript (Sprint 5)            |
  +-----------------------------------------------------------------+
- |  third_party          Mbed TLS 4.1, zlib, stb_truetype, Wuffs;  |
+ |  third_party          Mbed TLS 4.1, zlib, stb_truetype, Wuffs,  |
+ |                       NanoSVG;                                  |
  |                       QuickJS-ng (Sprint 5)                     |
  +-----------------------------------------------------------------+
 ```

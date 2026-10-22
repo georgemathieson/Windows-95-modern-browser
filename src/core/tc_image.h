@@ -1,5 +1,6 @@
 /* Images: telling formats apart by their bytes, decoding them with Wuffs
  * (decision 35) into premultiplied ARGB, and stepping through animations.
+ * SVG pictures (tc_svg, decision 41) are drawn at the size they're shown.
  *
  * Decoded frames are tc_surfaces whose pixels are 0xAARRGGBB with the
  * colour already multiplied by alpha. An animation keeps one frame at a
@@ -18,14 +19,16 @@ typedef enum tc_image_type {
     TC_IMAGE_GIF,
     TC_IMAGE_BMP,
     TC_IMAGE_WEBP,
-    TC_IMAGE_ICO
+    TC_IMAGE_ICO,
+    TC_IMAGE_SVG
 } tc_image_type;
 
 /* The largest width or height Tachyon accepts. */
 #define TC_IMAGE_MAX_SIDE 32767
 
 /* An image's type from its first bytes (the MIME Sniffing Standard's image
-   type patterns), or TC_IMAGE_NONE. */
+   type patterns, and an <svg> element at the start of an SVG file), or
+   TC_IMAGE_NONE. */
 tc_image_type tc_image_sniff(const void *data, size_t len);
 /* Its MIME type, e.g. "image/png" ("" for none). */
 const char *tc_image_mime(tc_image_type type);
@@ -50,8 +53,16 @@ uint32_t tc_image_loops(const tc_image *img);
    more than max_pixels pixels is refused (TC_ERR_TOO_LARGE). A frame cut
    short keeps what was decoded, and gives TC_ERR_DECODE. */
 int tc_image_decode(tc_image *img, uint32_t max_pixels);
-/* The decoded frame (premultiplied 0xAARRGGBB), or NULL. */
+/* The decoded frame (premultiplied 0xAARRGGBB), or NULL. An SVG's may be
+   bigger or smaller than its width and height. */
 const tc_surface *tc_image_pixels(const tc_image *img);
+
+/* SVG pictures have no pixels of their own. Ask for one drawn at least
+   w x h (keeping its shape): if that's bigger than asked for before, what
+   was drawn is dropped, and tc_image_decode draws it again at the new
+   size, or as near as max_pixels allows. Other images ignore it. */
+int tc_image_scalable(const tc_image *img);
+void tc_image_want_size(tc_image *img, int w, int h);
 
 /* Move an animation to its next frame and decode it, starting again at
    the end while it has loops left. *delay_ms: how long to show it.

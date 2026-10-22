@@ -318,16 +318,10 @@ static int data_url(const char *url, tc_buf *out)
     return TC_OK;
 }
 
-/* The picture for an absolute URL, added if it's new. */
-static int image_index(struct tc_page_images *im, const char *url, uint32_t *index)
+/* A new picture at the end of the table, for url. */
+static int add_image(struct tc_page_images *im, const char *url, page_image **out)
 {
-    uint32_t i;
     page_image *e;
-    for (i = 0; i < im->n; i++)
-        if (strcmp(im->items[i].url, url) == 0) {
-            *index = i;
-            return TC_OK;
-        }
     if (im->n >= MAX_PAGE_IMAGES)
         return TC_ERR_TOO_LARGE;
     if (im->n == im->cap) {
@@ -343,6 +337,23 @@ static int image_index(struct tc_page_images *im, const char *url, uint32_t *ind
     if (!(e->url = malloc(strlen(url) + 1)))
         return TC_ERR_NOMEM;
     strcpy(e->url, url);
+    *out = e;
+    return TC_OK;
+}
+
+/* The picture for an absolute URL, added if it's new. */
+static int image_index(struct tc_page_images *im, const char *url, uint32_t *index)
+{
+    uint32_t i;
+    page_image *e;
+    int err;
+    for (i = 0; i < im->n; i++)
+        if (strcmp(im->items[i].url, url) == 0) {
+            *index = i;
+            return TC_OK;
+        }
+    if ((err = add_image(im, url, &e)) != TC_OK)
+        return err;
     if (strncmp(url, "data:", 5) == 0) {
         /* Nothing to fetch. */
         tc_buf bytes;
@@ -374,6 +385,87 @@ static int image_for(struct tc_page_images *im, const char *url, const char *bas
     err = image_index(im, abs.href, index);
     tc_url_free(&abs);
     return err;
+}
+
+/* ---- Inline <svg> ---- */
+
+/* "currentColor", in any case. */
+static int current_color(const char *s)
+{
+    static const char word[] = "currentcolor";
+    size_t i;
+    for (i = 0; i < sizeof word - 1; i++)
+        if ((s[i] >= 'A' && s[i] <= 'Z' ? s[i] + 32 : s[i]) != word[i])
+            return 0;
+    return 1;
+}
+
+/* Text for an attribute or a style element, safe inside NanoSVG's quotes
+   and tags (it reads no entities), with currentColor made color. */
+static int svg_text(tc_buf *out, const char *s, size_t len, tc_color color)
+{
+    size_t i;
+    int err = TC_OK;
+    for (i = 0; i < len && !err; i++) {
+        if (len - i >= 12 && current_color(s + i)) {
+            err = tc_buf_printf(out, "#%06lx", (unsigned long)(color & 0xFFFFFF));
+            i += 11;
+        } else {
+            char c = s[i] == '"' ? '\'' : s[i] == '<' ? ' ' : s[i];
+            err = tc_buf_append(out, &c, 1);
+        }
+    }
+    return err;
+}
+
+/* An <svg> element as markup for NanoSVG: its SVG elements, their
+   attributes, and the text of style elements. */
+static int svg_markup(const tc_element *el, const tc_styled *styled, tc_color color, tc_buf *out, int depth)
+{
+    const tc_element_styles *es = tc_styled_element(styled, el);
+    const tc_node *c;
+    uint32_t i;
+    int err;
+    if (es && es->style)
+        color = es->style->color;
+    err = tc_buf_printf(out, "<%s", el->name);
+    for (i = 0; i < el->attr_count && !err; i++) {
+        const tc_attr *a = &el->attrs[i];
+        err = tc_buf_printf(out, " %s%s%s=\"", a->prefix ? a->prefix : "", a->prefix ? ":" : "", a->name);
+        if (!err)
+            err = svg_text(out, a->value, a->value_len, color);
+        if (!err)
+            err = tc_buf_append(out, "\"", 1);
+    }
+    if (!err)
+        err = tc_buf_append(out, ">", 1);
+    for (c = el->node.first_child; c && !err && depth < 100; c = c->next) {
+        if (c->type == TC_NODE_ELEMENT && c->ns == TC_NS_SVG && c->tag != TC_TAG_FOREIGNOBJECT)
+            err = svg_markup((const tc_element *)c, styled, color, out, depth + 1);
+        else if (c->type == TC_NODE_TEXT && tc_dom_is(&el->node, TC_NS_SVG, TC_TAG_STYLE))
+            err = svg_text(out, ((const tc_chardata *)c)->data, ((const tc_chardata *)c)->len, color);
+    }
+    return err ? err : tc_buf_printf(out, "</%s>", el->name);
+}
+
+/* An inline <svg>'s picture, made from its markup the first time. */
+static int inline_svg(struct tc_page_images *im, const tc_element *el, const tc_styled *styled)
+{
+    page_image *e;
+    tc_buf markup;
+    int err;
+    if (ref_find(im, el))
+        return TC_OK;
+    if ((err = add_image(im, "", &e)) != TC_OK) /* no URL: never shared */
+        return err;
+    tc_buf_init(&markup);
+    e->state = TC_PAGE_IMAGE_FAILED;
+    if (svg_markup(el, styled, 0xFF000000u, &markup, 0) == TC_OK &&
+        tc_image_new(markup.data ? markup.data : "", markup.len, &e->image) == TC_OK)
+        e->state = TC_PAGE_IMAGE_LOADED;
+    tc_buf_free(&markup);
+    im->n++;
+    return ref_add(im, el, im->n - 1, 1);
 }
 
 /* ---- Choosing an <img>'s source (the HTML Standard's srcset and sizes) ---- */
@@ -592,7 +684,7 @@ static tc_image *source_url(void *ctx, const tc_css_image *css)
     return r && im->items[r->index].state == TC_PAGE_IMAGE_LOADED ? im->items[r->index].image : NULL;
 }
 
-static const tc_surface *source_pixels(void *ctx, tc_image *img, tc_rect where)
+static const tc_surface *source_pixels(void *ctx, tc_image *img, tc_rect where, int w, int h)
 {
     struct tc_page_images *im = ctx;
     uint32_t i, mine = 0;
@@ -604,6 +696,11 @@ static const tc_surface *source_pixels(void *ctx, tc_image *img, tc_rect where)
     if (tc_image_frames(img) > 1 && !tc_rect_is_empty(where)) {
         im->items[mine].shown = 1;
         im->items[mine].area = tc_rect_union(im->items[mine].area, where);
+    }
+    if (tc_image_scalable(img)) {
+        size_t before = tc_image_memory(img);
+        tc_image_want_size(img, w, h); /* may drop what was drawn, to draw it bigger */
+        im->decoded -= TC_MIN(im->decoded, before - tc_image_memory(img));
     }
     if (tc_image_pixels(img))
         return tc_image_pixels(img);
@@ -689,7 +786,11 @@ static int find_images(tc_page *p, const tc_styled *styled, const tc_media_env *
         const tc_element_styles *es;
         if (n->type != TC_NODE_ELEMENT)
             continue;
-        if (tc_dom_is_html(n, TC_TAG_IMG) ||
+        if (tc_dom_is(n, TC_NS_SVG, TC_TAG_SVG) && (!n->parent || n->parent->ns != TC_NS_SVG)) {
+            err = inline_svg(im, el, styled);
+            if (err != TC_ERR_NOMEM)
+                err = TC_OK;
+        } else if (tc_dom_is_html(n, TC_TAG_IMG) ||
             (tc_dom_is_html(n, TC_TAG_INPUT) && tc_dom_get_attr(el, "type") &&
              tc_css_ascii_ieq(tc_dom_get_attr(el, "type"), "image"))) {
             char url[4096];

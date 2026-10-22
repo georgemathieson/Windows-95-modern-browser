@@ -165,14 +165,75 @@ static void test_sniffing(void)
         { "RIFF\1\2\3\4WAVEfmt ", 16, TC_IMAGE_NONE },
         { "\0\0\1\0", 4, TC_IMAGE_ICO },
         { "\0\0\2\0", 4, TC_IMAGE_ICO },
+        { "<svg>", 5, TC_IMAGE_SVG },
+        { "\xEF\xBB\xBF <?xml version='1.0'?>\n<!-- c --><!DOCTYPE svg [ <!ENTITY e 'x'> ]><svg x='1'>", 81,
+          TC_IMAGE_SVG },
         { "<svg", 4, TC_IMAGE_NONE },
+        { "<svgx>", 6, TC_IMAGE_NONE },
+        { "<html><svg>", 11, TC_IMAGE_NONE },
         { "", 0, TC_IMAGE_NONE },
     };
     size_t i;
     for (i = 0; i < TC_ARRAY_LEN(cases); i++)
         TC_CHECK_INT(tc_image_sniff(cases[i].bytes, cases[i].len), cases[i].type);
     TC_CHECK_STR(tc_image_mime(TC_IMAGE_WEBP), "image/webp");
+    TC_CHECK_STR(tc_image_mime(TC_IMAGE_SVG), "image/svg+xml");
     TC_CHECK_STR(tc_image_mime(TC_IMAGE_NONE), "");
+}
+
+/* SVG: drawn at their natural size, or bigger when asked. */
+static void test_svg(void)
+{
+    tc_image *img = open_image("shapes.svg");
+    const tc_surface *s;
+    if (!img)
+        return;
+    TC_CHECK_INT(tc_image_type_of(img), TC_IMAGE_SVG);
+    TC_CHECK(tc_image_scalable(img));
+    TC_CHECK_INT(tc_image_width(img), 8);
+    TC_CHECK_INT(tc_image_height(img), 4);
+    TC_CHECK_INT(tc_image_frames(img), 1);
+    TC_CHECK_INT(tc_image_decode(img, NO_LIMIT), TC_OK);
+    TC_CHECK(close_to(pixel(img, 1, 1), 0xFFFF0000u, 1));
+    TC_CHECK(close_to(pixel(img, 5, 1), 0x80000080u, 1)); /* half blue, premultiplied */
+    tc_image_free(img);
+
+    img = open_image("viewbox.svg"); /* 16x16, a viewBox four times smaller */
+    if (!img)
+        return;
+    TC_CHECK_INT(tc_image_width(img), 16);
+    TC_CHECK_INT(tc_image_decode(img, NO_LIMIT), TC_OK);
+    TC_CHECK(close_to(pixel(img, 12, 4), 0xFF00FF00u, 1)); /* the moved group */
+    TC_CHECK(close_to(pixel(img, 4, 12), 0xFF000000u, 1)); /* the stroke */
+    TC_CHECK_INT(pixel(img, 4, 4), 0);
+    /* Wanted bigger: drawn again, crisp. */
+    tc_image_want_size(img, 32, 32);
+    TC_CHECK(tc_image_pixels(img) == NULL);
+    TC_CHECK_INT(tc_image_decode(img, NO_LIMIT), TC_OK);
+    s = tc_image_pixels(img);
+    TC_CHECK(s && s->width == 32 && s->height == 32);
+    TC_CHECK(close_to(pixel(img, 24, 8), 0xFF00FF00u, 1));
+    TC_CHECK(close_to(pixel(img, 8, 24), 0xFF000000u, 1));
+    TC_CHECK_INT(tc_image_width(img), 16); /* its own size doesn't change */
+    /* Smaller: what's drawn will do. A different shape: enough to cover
+       it, in its own shape. */
+    tc_image_want_size(img, 10, 10);
+    TC_CHECK(tc_image_pixels(img) != NULL);
+    tc_image_want_size(img, 64, 16);
+    TC_CHECK_INT(tc_image_decode(img, NO_LIMIT), TC_OK);
+    s = tc_image_pixels(img);
+    TC_CHECK(s && s->width == 64 && s->height == 64);
+    /* More pixels than allowed: drawn smaller. */
+    tc_image_want_size(img, 1000, 1000);
+    TC_CHECK_INT(tc_image_decode(img, 100 * 100), TC_OK);
+    s = tc_image_pixels(img);
+    TC_CHECK(s && s->width * s->height <= 100 * 100 && s->width >= 99);
+    TC_CHECK_INT(tc_image_memory(img), (size_t)s->width * s->height * 4);
+    tc_image_free(img);
+
+    /* No size at all, or an absurd one. */
+    TC_CHECK_INT(tc_image_new("<svg></svg>", 11, &img), TC_ERR_DECODE);
+    TC_CHECK_INT(tc_image_new("<svg width='100000' height='10'></svg>", 38, &img), TC_ERR_TOO_LARGE);
 }
 
 static void test_bad_images(void)
@@ -219,5 +280,6 @@ void tc_suite_image(void)
     TC_RUN(test_lossy_images);
     TC_RUN(test_animation);
     TC_RUN(test_sniffing);
+    TC_RUN(test_svg);
     TC_RUN(test_bad_images);
 }

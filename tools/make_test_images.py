@@ -127,6 +127,19 @@ def main():
     subprocess.run(["convert", "-dispose", "none", "-delay", "10", "-size", "4x4", "xc:red",
                     "-delay", "20", "-size", "2x2", "xc:lime",
                     "-delay", "30", "-size", "4x4", "xc:blue", "-loop", "0", p("frames.gif")], check=True)
+    # SVG: shapes in an opaque and a half transparent fill; and a viewBox
+    # scaled four times, with a group's transform and a stroke.
+    with open(p("shapes.svg"), "w") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4">\n'
+                '  <rect x="0" y="0" width="4" height="4" fill="#ff0000"/>\n'
+                '  <rect x="4" y="0" width="4" height="4" fill="#0000ff" fill-opacity="0.5"/>\n'
+                '</svg>\n')
+    with open(p("viewbox.svg"), "w") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<!-- before the element -->\n'
+                '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 4 4">\n'
+                '  <g transform="translate(2 0)"><rect width="2" height="2" fill="lime"/></g>\n'
+                '  <path d="M0 3 H4" stroke="black" stroke-width="2" fill="none"/>\n'
+                '</svg>\n')
     with open(p("pattern-32.ico"), "wb") as f:
         f.write(ico([(4, 2, 32, dib(PATTERN, 32))]))
     with open(p("pattern-4.ico"), "wb") as f:

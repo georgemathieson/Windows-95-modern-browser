@@ -1,8 +1,11 @@
-/* Image decoding with Wuffs, and ICO's container and bitmaps. */
+/* Image decoding with Wuffs, ICO's container and bitmaps, and SVG through
+ * tc_svg. */
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "tc_image.h"
+#include "tc_svg.h"
 #include "tc_wuffs.h"
 
 #define MAX_FRAMES  10000             /* frames counted in an animation */
@@ -32,6 +35,9 @@ struct tc_image {
     uint32_t frame, loops_done, delay;
     uint8_t disposal;                 /* the current frame's */
     wuffs_base__rect_ie_u32 bounds;
+    /* SVG: the parsed picture, and the size to draw it at. */
+    tc_svg *svg;
+    int want_w, want_h;
 };
 
 static uint32_t u16le(const uint8_t *p)
@@ -59,13 +65,15 @@ tc_image_type tc_image_sniff(const void *data, size_t len)
         return TC_IMAGE_PNG;
     if (len >= 3 && p[0] == 0xFF && p[1] == 0xD8 && p[2] == 0xFF)
         return TC_IMAGE_JPEG;
+    if (tc_svg_sniff(data, len))
+        return TC_IMAGE_SVG;
     return TC_IMAGE_NONE;
 }
 
 const char *tc_image_mime(tc_image_type type)
 {
     static const char *const names[] = { "", "image/png", "image/jpeg", "image/gif", "image/bmp", "image/webp",
-                                         "image/x-icon" };
+                                         "image/x-icon", "image/svg+xml" };
     return (unsigned)type < TC_ARRAY_LEN(names) ? names[type] : "";
 }
 
@@ -257,6 +265,12 @@ int tc_image_new(const void *data, size_t len, tc_image **out)
     img->frames = 1;
     if (img->type == TC_IMAGE_NONE) {
         err = TC_ERR_DECODE;
+    } else if (img->type == TC_IMAGE_SVG) {
+        float w, h;
+        img->codec = TC_IMAGE_NONE;
+        err = tc_svg_parse(data, len, &img->svg, &w, &h);
+        img->w = img->want_w = (int)ceil(w);
+        img->h = img->want_h = (int)ceil(h);
     } else if (img->type == TC_IMAGE_ICO) {
         dib d;
         err = read_ico(img, &d);
@@ -294,6 +308,7 @@ void tc_image_free(tc_image *img)
     if (!img)
         return;
     tc_image_discard(img);
+    tc_svg_free(img->svg);
     free(img->data);
     free(img);
 }
@@ -394,11 +409,55 @@ static int decode_next(tc_image *img)
     return st.repr ? TC_ERR_DECODE : TC_OK;
 }
 
+int tc_image_scalable(const tc_image *img)
+{
+    return img->svg != NULL;
+}
+
+void tc_image_want_size(tc_image *img, int w, int h)
+{
+    double k;
+    int rw, rh;
+    if (!img->svg || !(w > 0 && h > 0))
+        return;
+    k = TC_MAX((double)w / img->w, (double)h / img->h);
+    rw = (int)TC_MIN(ceil(img->w * k), TC_IMAGE_MAX_SIDE);
+    rh = (int)TC_MIN(ceil(img->h * k), TC_IMAGE_MAX_SIDE);
+    if (rw > img->want_w || rh > img->want_h) {
+        tc_image_discard(img);
+        img->want_w = TC_MAX(rw, img->want_w);
+        img->want_h = TC_MAX(rh, img->want_h);
+    }
+}
+
+/* An SVG drawn at the size wanted, or smaller to fit max_pixels. */
+static int render_svg(tc_image *img, uint32_t max_pixels)
+{
+    int w = img->want_w, h = img->want_h;
+    if ((uint64_t)w * (uint64_t)h > max_pixels) {
+        double k = sqrt((double)max_pixels / ((double)w * h));
+        w = TC_MAX(1, (int)(w * k));
+        h = TC_MAX(1, (int)(h * k));
+    }
+    img->pixels = malloc((size_t)w * (size_t)h * sizeof(uint32_t));
+    if (!img->pixels)
+        return TC_ERR_NOMEM;
+    tc_surface_wrap(&img->surface, img->pixels, w, h, w);
+    if (tc_svg_render(img->svg, &img->surface) != TC_OK) {
+        tc_image_discard(img);
+        return TC_ERR_NOMEM;
+    }
+    img->decoded = 1;
+    return TC_OK;
+}
+
 int tc_image_decode(tc_image *img, uint32_t max_pixels)
 {
     int err;
     if (img->decoded)
         return TC_OK;
+    if (img->svg)
+        return render_svg(img, max_pixels);
     if ((uint64_t)img->w * (uint64_t)img->h > max_pixels)
         return TC_ERR_TOO_LARGE;
     if (!img->pixels) {
@@ -459,7 +518,8 @@ uint32_t tc_image_delay(const tc_image *img)
 
 size_t tc_image_memory(const tc_image *img)
 {
-    size_t frame = (size_t)img->w * (size_t)img->h * 4;
+    size_t frame = img->svg ? (size_t)img->surface.width * (size_t)img->surface.height * 4
+                            : (size_t)img->w * (size_t)img->h * 4;
     return (img->pixels ? frame : 0) + (img->backup ? frame : 0) + img->workbuf_len;
 }
 

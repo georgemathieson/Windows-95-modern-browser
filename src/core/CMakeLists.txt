@@ -98,6 +98,7 @@ add_library(tachyon_core STATIC
   tc_style_props.c
   tc_style_sheet.c
   tc_surface.c
+  tc_svg.c
   tc_tags.c
   tc_tls.c
   tc_url.c
@@ -109,6 +110,7 @@ target_include_directories(tachyon_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/third_party/stb
   ${PROJECT_SOURCE_DIR}/third_party/wuffs
+  ${PROJECT_SOURCE_DIR}/third_party/nanosvg
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib)

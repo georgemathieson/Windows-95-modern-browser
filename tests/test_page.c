@@ -482,6 +482,35 @@ static void test_image_order(void)
     tc_font_set_free(fonts);
 }
 
+/* Inline <svg> is a picture made from its markup. */
+static void test_inline_svg(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    tc_page p;
+    tc_surface s;
+    PAGE_FROM(&p, "http://example.com/",
+              "<!DOCTYPE html><style>body { margin: 0; color: #00f } svg { display: block }</style>"
+              "<svg width=8 height=4><rect width=4 height=4 fill=red /><rect x=4 width=4 height=4 fill=currentColor />"
+              "<foreignObject><p>not drawn</p></foreignObject></svg>"
+              "<svg viewBox='0 0 2 1' style='width: 20px'><rect width=1 height=1 fill=lime /></svg>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_image_count(&p), 2);
+    TC_CHECK_INT(tc_page_image_state(&p, 0), TC_PAGE_IMAGE_LOADED);
+    TC_CHECK_INT(tc_page_image_state(&p, 1), TC_PAGE_IMAGE_LOADED);
+    if (tc_surface_init(&s, 40, 40) == TC_OK) {
+        tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 0);
+        TC_CHECK_INT(tc_surface_get(&s, 1, 1), 0xFF0000);
+        TC_CHECK_INT(tc_surface_get(&s, 5, 1), 0x0000FF); /* currentColor: the element's color */
+        /* The second is 20px wide, so 10px high, and its left half lime. */
+        TC_CHECK_INT(tc_surface_get(&s, 5, 9), 0x00FF00);
+        TC_CHECK_INT(tc_surface_get(&s, 15, 9), 0xFFFFFF);
+        TC_CHECK_INT(tc_surface_get(&s, 5, 15), 0xFFFFFF);
+        tc_surface_free(&s);
+    }
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
 /* frames.gif: red for 100 ms, a green corner for 200, blue for 300. */
 static void test_animation(void)
 {
@@ -541,4 +570,5 @@ void tc_suite_page(void)
     TC_RUN(test_image_memory);
     TC_RUN(test_image_order);
     TC_RUN(test_animation);
+    TC_RUN(test_inline_svg);
 }
