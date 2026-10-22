@@ -165,6 +165,60 @@ static void test_drawing(void)
     tc_font_set_free(set);
 }
 
+/* Big glyphs aren't cached: each paint rasterises the part in its clip.
+   Painting in strips, as scrolling does, must give the same pixels, give
+   or take rounding (a level or two, on a few pixels). */
+static int close_pixels(const tc_surface *a, const tc_surface *b)
+{
+    int x, y;
+    for (y = 0; y < a->height; y++)
+        for (x = 0; x < a->width; x++) {
+            int d = (int)(tc_surface_get(a, x, y) & 255) - (int)(tc_surface_get(b, x, y) & 255);
+            if (d < -4 || d > 4)
+                return 0;
+        }
+    return 1;
+}
+
+static void test_big_glyphs(void)
+{
+    static const char *const serif[] = { "serif" };
+    tc_font_set *one = tc_font_set_new();
+    tc_surface a, b;
+    const char *dir = "/usr/share/fonts/truetype/liberation";
+    char path[200];
+    int i, y;
+
+    if (!one || tc_surface_init(&a, 300, 260) != TC_OK || tc_surface_init(&b, 300, 260) != TC_OK) {
+        tc_font_set_free(one);
+        return;
+    }
+    /* Only the regular face, so bold and italic are synthesised. */
+    snprintf(path, sizeof path, "%s/LiberationSerif-Regular.ttf", dir);
+    if (tc_font_set_add_file(one, path, NULL, 0, 0) != TC_OK)
+        tc_font_set_add_file(one, "Z:\\usr\\share\\fonts\\truetype\\liberation\\LiberationSerif-Regular.ttf", NULL, 0, 0);
+    if (tc_font_set_count(one)) {
+        for (i = 0; i < 2; i++) {
+            const tc_font *f = tc_font_match(one, serif, 1, i ? 700 : 400, i, 200);
+            tc_surface_fill(&a, tc_rect_make(0, 0, 300, 260), TC_RGB(255, 255, 255));
+            tc_surface_fill(&b, tc_rect_make(0, 0, 300, 260), TC_RGB(255, 255, 255));
+            tc_font_draw(f, &a, tc_rect_make(0, 0, 300, 260), 5, 200, "Ag", 2, 0, TC_RGB(0, 0, 0));
+            for (y = 0; y < 260; y += 7)
+                tc_font_draw(f, &b, tc_rect_make(0, y, 300, 7), 5, 200, "Ag", 2, 0, TC_RGB(0, 0, 0));
+            TC_CHECK(dark_pixels(&a, tc_rect_make(0, 0, 300, 260)) > 5000);
+            TC_CHECK(close_pixels(&a, &b));
+        }
+        /* A glyph far bigger than the surface draws the part that shows. */
+        tc_surface_fill(&a, tc_rect_make(0, 0, 300, 260), TC_RGB(255, 255, 255));
+        tc_font_draw(tc_font_match(one, serif, 1, 400, 0, 10000), &a, tc_rect_make(0, 0, 300, 260), -2000, 5000,
+                     "I", 1, 0, TC_RGB(0, 0, 0));
+        TC_CHECK(dark_pixels(&a, tc_rect_make(0, 0, 300, 260)) > 0);
+    }
+    tc_surface_free(&a);
+    tc_surface_free(&b);
+    tc_font_set_free(one);
+}
+
 static void test_no_fonts(void)
 {
     static const char *const serif[] = { "serif" };
@@ -192,5 +246,6 @@ void tc_suite_font(void)
     TC_RUN(test_matching);
     TC_RUN(test_metrics_and_measuring);
     TC_RUN(test_drawing);
+    TC_RUN(test_big_glyphs);
     TC_RUN(test_no_fonts);
 }

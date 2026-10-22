@@ -104,7 +104,7 @@ jobs:
                      https://www.bbc.co.uk/news \
                      https://www.yahoo.co.jp/ \
                      http://example.com/; do
-            name=$(echo "$url" | sed 's|^[a-z]*://||; s|[^A-Za-z0-9.]|_|g; s|_*$||')
+            name=$(echo "$url" | sed 's|://|-|; s|[^A-Za-z0-9.-]|_|g; s|_*$||')
             ok=0
             for attempt in 1 2 3; do
               if wine TACHYON/FETCH.EXE -q --render --fonts 'Z:\usr\share\fonts\truetype\liberation' \

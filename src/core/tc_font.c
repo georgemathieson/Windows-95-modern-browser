@@ -12,6 +12,7 @@
 
 #define GLYPH_BUDGET (2u << 20) /* bytes of glyph bitmaps before the cache is emptied */
 #define ITALIC_SHEAR 0.2f       /* synthesised italics lean like this */
+#define BIG_GLYPH (128 * 128)   /* pixels: bigger glyphs aren't cached, and are drawn a visible piece at a time */
 
 enum { FACE_UNLOADED, FACE_LOADED, FACE_FAILED };
 
@@ -32,9 +33,12 @@ typedef struct face {
 typedef struct glyph {
     int32_t id;                 /* -1: an empty slot */
     int16_t w, h, xoff, yoff;
-    uint8_t *bitmap;            /* NULL until rasterised */
+    uint8_t *bitmap;            /* NULL until rasterised; see no_bitmap and big_glyph */
     float advance;
 } glyph;
+
+/* A glyph's bitmap when it has nothing to draw, or is too big to cache. */
+static uint8_t no_bitmap, big_glyph;
 
 struct tc_font {
     tc_font_set *set;
@@ -392,7 +396,7 @@ static void free_glyphs(tc_font *f)
 {
     uint32_t i;
     for (i = 0; i < f->glyphs_cap; i++)
-        if (f->glyphs[i].id >= 0 && f->glyphs[i].bitmap && f->glyphs[i].w)
+        if (f->glyphs[i].id >= 0 && f->glyphs[i].bitmap && f->glyphs[i].bitmap != &big_glyph && f->glyphs[i].w)
             free(f->glyphs[i].bitmap);
     free(f->glyphs);
     f->glyphs = NULL;
@@ -716,27 +720,64 @@ static glyph *find_glyph(tc_font *f, int32_t id)
     }
 }
 
-/* Rasterise a glyph: leaned for synthesised italics, a pixel wider for
-   synthesised bold. */
-static void rasterise(tc_font *f, glyph *g)
+/* A glyph's outline, leaned for synthesised italics. */
+static int glyph_shape(tc_font *f, int32_t id, stbtt_vertex **v)
 {
-    static uint8_t empty;
-    stbtt_vertex *v;
-    int n = stbtt_GetGlyphShape(&f->face->info, g->id, &v), i, w, h, x0, y0, x1, y1;
-    float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f, s = f->scale;
-    stbtt__bitmap bm;
-
-    g->bitmap = &empty;
-    g->w = g->h = 0;
-    if (n <= 0)
-        return;
-    for (i = 0; i < n; i++) {
-        stbtt_vertex *p = &v[i];
-        if (f->fake_italic) {
+    int n = stbtt_GetGlyphShape(&f->face->info, id, v), i;
+    if (f->fake_italic)
+        for (i = 0; i < n; i++) {
+            stbtt_vertex *p = &(*v)[i];
             p->x = (stbtt_vertex_type)(p->x + p->y * ITALIC_SHEAR);
             p->cx = (stbtt_vertex_type)(p->cx + p->cy * ITALIC_SHEAR);
             p->cx1 = (stbtt_vertex_type)(p->cx1 + p->cy1 * ITALIC_SHEAR);
         }
+    return n;
+}
+
+/* Coverage for the w x h pixels of an outline from (x0, y0), y down from
+   the baseline. Synthesised bold smears each pixel one to the right, so
+   the column to the left of the window is rasterised too. */
+static uint8_t *rasterise_part(tc_font *f, stbtt_vertex *v, int n, int x0, int y0, int w, int h)
+{
+    int bold = f->fake_bold, x, y;
+    stbtt__bitmap bm;
+
+    bm.w = w + bold;
+    bm.h = h;
+    bm.stride = bm.w;
+    bm.pixels = calloc((size_t)bm.w * (size_t)h, 1);
+    if (!bm.pixels)
+        return NULL;
+    stbtt_Rasterize(&bm, 0.35f, v, n, f->scale, f->scale, 0, 0, x0 - bold, y0, 1, NULL);
+    if (bold) {
+        for (y = 0; y < h; y++)
+            for (x = bm.w - 1; x > 0; x--) {
+                uint8_t *p = bm.pixels + y * bm.w + x;
+                if (p[-1] > p[0])
+                    p[0] = p[-1];
+            }
+        for (y = 0; y < h; y++) /* drop the extra column */
+            memmove(bm.pixels + y * w, bm.pixels + y * bm.w + 1, (size_t)w);
+    }
+    return bm.pixels;
+}
+
+/* Find a glyph's bitmap box, and rasterise it if it's small enough to
+   cache. Bigger ones are drawn a visible piece at a time (draw_part). */
+static void rasterise(tc_font *f, glyph *g)
+{
+    stbtt_vertex *v;
+    int n = glyph_shape(f, g->id, &v), i, w, h, x0, y0, x1, y1;
+    float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f, s = f->scale;
+
+    g->bitmap = &no_bitmap;
+    g->w = g->h = 0;
+    if (n <= 0) {
+        stbtt_FreeShape(&f->face->info, v);
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        stbtt_vertex *p = &v[i];
         minx = TC_MIN(minx, p->x), maxx = TC_MAX(maxx, p->x);
         miny = TC_MIN(miny, p->y), maxy = TC_MAX(maxy, p->y);
         if (p->type == STBTT_vcurve || p->type == STBTT_vcubic) {
@@ -754,35 +795,20 @@ static void rasterise(tc_font *f, glyph *g)
     y1 = (int)ceil(-miny * s);
     w = x1 - x0 + f->fake_bold;
     h = y1 - y0;
-    if (w <= 0 || h <= 0 || w > 2048 || h > 2048) {
-        stbtt_FreeShape(&f->face->info, v);
-        return;
+    if (w > 0 && h > 0 && w <= INT16_MAX && h <= INT16_MAX && x0 >= INT16_MIN && y0 >= INT16_MIN) {
+        uint8_t *pixels = (long)w * h > BIG_GLYPH ? &big_glyph : rasterise_part(f, v, n, x0, y0, w, h);
+        if (pixels) {
+            g->bitmap = pixels;
+            g->w = (int16_t)w;
+            g->h = (int16_t)h;
+            g->xoff = (int16_t)x0;
+            g->yoff = (int16_t)y0;
+            if (pixels != &big_glyph)
+                f->set->glyph_bytes += (size_t)w * (size_t)h;
+        }
     }
-    bm.w = w;
-    bm.h = h;
-    bm.stride = w;
-    bm.pixels = calloc((size_t)w * (size_t)h, 1);
-    if (!bm.pixels) {
-        stbtt_FreeShape(&f->face->info, v);
-        return;
-    }
-    stbtt_Rasterize(&bm, 0.35f, v, n, s, s, 0, 0, x0, y0, 1, NULL);
+    f->set->glyph_bytes += sizeof *g;
     stbtt_FreeShape(&f->face->info, v);
-    if (f->fake_bold) {
-        int x, y;
-        for (y = 0; y < h; y++)
-            for (x = w - 1; x > 0; x--) {
-                uint8_t *p = bm.pixels + y * w + x;
-                if (p[-1] > p[0])
-                    p[0] = p[-1];
-            }
-    }
-    g->bitmap = bm.pixels;
-    g->w = (int16_t)w;
-    g->h = (int16_t)h;
-    g->xoff = (int16_t)x0;
-    g->yoff = (int16_t)y0;
-    f->set->glyph_bytes += (size_t)w * (size_t)h + sizeof *g;
 }
 
 /* Empty every glyph cache once they take too much memory. */
@@ -827,6 +853,28 @@ static void blit(tc_surface *s, tc_rect clip, int x, int y, const glyph *g, tc_c
             db += ((int)cb - db) * a / 255;
             dst[col] = (uint32_t)dr << 16 | (uint32_t)dg << 8 | (uint32_t)db;
         }
+    }
+}
+
+/* A big glyph: rasterise only the part of it inside the clip. */
+static void draw_part(tc_font *f, const glyph *g, tc_surface *s, tc_rect clip, int x, int y, tc_color color)
+{
+    tc_rect r = tc_rect_intersect(tc_rect_intersect(clip, tc_rect_make(0, 0, s->width, s->height)),
+                                  tc_rect_make(x, y, g->w, g->h));
+    stbtt_vertex *v;
+    glyph part;
+    int n;
+
+    if (tc_rect_is_empty(r))
+        return;
+    n = glyph_shape(f, g->id, &v);
+    part.bitmap = n > 0 ? rasterise_part(f, v, n, g->xoff + (r.x - x), g->yoff + (r.y - y), r.w, r.h) : NULL;
+    stbtt_FreeShape(&f->face->info, v);
+    if (part.bitmap) {
+        part.w = (int16_t)r.w;
+        part.h = (int16_t)r.h;
+        blit(s, clip, r.x, r.y, &part, color);
+        free(part.bitmap);
     }
 }
 
@@ -888,7 +936,9 @@ static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float 
         if (s && TC_ALPHA(color)) {
             if (!g->bitmap)
                 rasterise(f, g);
-            if (g->w)
+            if (g->bitmap == &big_glyph)
+                draw_part(f, g, s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, color);
+            else if (g->w)
                 blit(s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, g, color);
         }
         pen += g->advance + letter_spacing;

@@ -149,9 +149,10 @@ and the test suites are its specification.
   32,767, so long pages scroll in units of several pixels. Resizing lays
   the page out again 150 ms after the last change.
 - **Limits.** The box tree stops nesting at 200 levels (deeper elements
-  flow into their ancestor), font sizes stop at 10,000 px, glyphs bigger
-  than 2,048 px aren't rasterised, and a page loads at most 64 style sheets,
-  with imports four deep.
+  flow into their ancestor), lengths stay within ±2^25 px and font sizes
+  within 10,000 px, and a page loads at most 64 style sheets, with imports
+  four deep. Glyphs bigger than 128×128 px aren't cached: each paint
+  rasterises only the part inside its clip.
 - **Testing.** `tachyon-render` (`tools/render`) renders a page from a file
   to PNG on the host. The reference tests (`tests/reftests`) render each
   test page and its reference and compare them pixel for pixel, natively
