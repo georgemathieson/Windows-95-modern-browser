@@ -113,7 +113,7 @@ target_include_directories(tachyon_core PUBLIC
   ${PROJECT_SOURCE_DIR}/third_party/nanosvg
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
-target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib)
+target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib brotlidec)
 if(NOT WIN32)
   target_link_libraries(tachyon_core PUBLIC m) # crtdll has the maths functions on Windows
 endif()

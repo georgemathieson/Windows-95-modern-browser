@@ -88,6 +88,7 @@ enable_testing()
 
 add_subdirectory(third_party/mbedtls)
 add_subdirectory(third_party/zlib)
+add_subdirectory(third_party/brotli)
 add_subdirectory(src/core)
 if(WIN32)
   add_subdirectory(src/platform/win32)

@@ -12,6 +12,7 @@ for trying the browser by hand. Python standard library only.
 """
 
 import argparse
+import base64
 import gzip
 import http.server
 import os
@@ -26,6 +27,9 @@ import time
 import zlib
 
 TEXT = b"Tachyon: the modern web, sent back to 1995.\n" * 50
+# TEXT compressed with Brotli (Python's brotli module), so the server needs
+# no encoder of its own.
+TEXT_BR = base64.b64decode("G5cI4BWh0nVyfsQLH+S1tqiwBRtwwB4kEBAtYpftlqVVbMjZv8OR7SpYlaH4NW8CAAAA")
 
 # A page for trying the document tree: windows-1252, declared only in a
 # <meta>, with the parser's harder cases (misnested tags, a table with stray
@@ -103,6 +107,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, gzip.compress(TEXT), [("Content-Encoding", "gzip")])
         elif path == "/deflate":
             self.reply(200, zlib.compress(TEXT), [("Content-Encoding", "deflate")])
+        elif path == "/br":
+            self.reply(200, TEXT_BR, [("Content-Encoding", "br")])
         elif path == "/close":
             self.send_response(200)
             self.send_header("Connection", "close")
@@ -258,10 +264,11 @@ def main():
         ("https, ECDSA, TLS 1.2", ["--cacert", ca, url(ecdsa12, "/hello")], True,
          ["Hello from the test server"], ["TLSv1.2", "ECDHE-ECDSA"]),
         ("headers sent", ["--cacert", ca, url(rsa, "/headers")], True,
-         ["User-Agent: Mozilla/5.0 (Windows 95) Tachyon/", "Accept-Encoding: gzip, deflate"], []),
+         ["User-Agent: Mozilla/5.0 (Windows 95) Tachyon/", "Accept-Encoding: gzip, deflate, br"], []),
         ("chunked body", ["--cacert", ca, url(rsa, "/chunked")], True, ["chunk one, chunk two, the end"], []),
         ("gzip body", ["--cacert", ca, url(rsa, "/gzip")], True, [TEXT.decode()], ["%d bytes" % len(TEXT)]),
         ("deflate body", ["--cacert", ca, url(rsa, "/deflate")], True, [TEXT.decode()], []),
+        ("brotli body", ["--cacert", ca, url(rsa, "/br")], True, [TEXT.decode()], ["%d bytes" % len(TEXT)]),
         ("body until close", [url(http_port, "/close", "http")], True, ["delimited by closing"], []),
         ("redirect chain", ["--cacert", ca, url(rsa, "/redirect/3")], True,
          ["Hello from the test server"], ["4 redirects", "/hello"]),

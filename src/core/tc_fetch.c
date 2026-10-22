@@ -311,7 +311,7 @@ static int load_once(const tc_url *url, const tc_fetch_options *o, tc_response *
             err = err ? err
                       : add_header(&extra, "Accept", o->accept ? o->accept : "text/html,application/xhtml+xml,*/*;q=0.8");
             err = err ? err : add_header(&extra, "Accept-Language", "en");
-            err = err ? err : add_header(&extra, "Accept-Encoding", "gzip, deflate");
+            err = err ? err : add_header(&extra, "Accept-Encoding", "gzip, deflate, br");
             err = err ? err : add_header(&extra, "Connection", o->pool ? "keep-alive" : "close");
             err = err ? err : tc_http_build_request(&req, "GET", url, o->proxy_host && !c.tls, &extra);
             err = err ? err : conn_send(&c, tc_buf_cstr(&req), req.len, o);
