@@ -48,7 +48,7 @@ does not remember anything between sessions; this board does.
 - [x] Font fallback: each character missing from the chosen font comes from a font that has it, Windows' installed fonts first, then Tachyon's optional font pack (decision 36); TrueType collections (`.ttc`); lines break between Chinese and Japanese characters. Scripts that need shaping or right-to-left layout wait (decision 37)
 - [x] `@font-face`: TrueType and OpenType, WOFF and WOFF2 (Brotli), with `unicode-range`, weights and styles; every downloaded font checked before stb_truetype reads it (decision 38); text laid out again when its fonts arrive. Brotli also for `Content-Encoding: br`
 - [x] Encodings: Shift_JIS, EUC-JP, ISO-2022-JP, GBK, gb18030, Big5 and EUC-KR from the WHATWG indexes, with tests (revisits decision 18)
-- [ ] Reference tests for images, backgrounds and fallback; the decoders, SVG and fonts survive fuzzing; CI renders the real sites with their images, the Japanese Wikipedia included
+- [x] Reference tests for images, backgrounds and fallback; the decoders, SVG and fonts survive fuzzing; CI renders the real sites with their images, the Japanese Wikipedia included
 - [ ] **George reads both Wikipedia articles on Windows 95** (the demo)
 - [ ] Carried over from Sprint 3: George reads a Wikipedia article in Tachyon on Windows 95 (Sprint 3's demo, with this sprint's build or PR #6's)
 - [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. `main` has moved on, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
@@ -180,9 +180,9 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 ## Sprint history
 
-### Sprint 4: Images and fonts (started 2026-10-22)
+### Sprint 4: Images and fonts (started 2026-10-22; opened as PR #7)
 
-- Started from `main` after PR #6 merged Sprint 3.
+- Started from `main` after PR #6 merged Sprint 3. Opened as PR #7 once everything but George's demo was done, with CI green: the build, the Wine tests, all four fuzz targets and the real sites.
 - George's choices: fonts for other scripts come from Windows first, then an optional font pack on the CD and in the zip (decision 36); this sprint covers scripts written one character after another, plus the old Chinese, Japanese and Korean encodings (decision 37).
 - **Pictures:** Wuffs (decision 35) decodes PNG, JPEG, GIF, BMP, WebP and ICO (`tc_image`), with unit tests and an image fuzzer. Pages show `<img>` (with `srcset`, `sizes` and `<picture>`), CSS background layers with `url()` and `linear-gradient()`, and `list-style-image`. The browser loads pictures on a second thread after showing the page, those in view first, then those below, and keeps decoded pixels within a memory budget (an eighth of the PC's memory, 8 to 64 MB), dropping the ones drawn longest ago. `FETCH --render` and `tachyon-render` load them too.
 - **Animation:** painting tells the page where each animated picture went, and a timer moves the ones on screen to their next frame and repaints only them. Pictures scrolled away, or in a minimised window, pause.
