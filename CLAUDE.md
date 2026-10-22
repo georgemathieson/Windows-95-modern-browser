@@ -23,7 +23,8 @@ only when George asks.
 # One-time setup in a fresh Ubuntu 24.04 container
 dpkg --add-architecture i386 && apt-get update
 apt-get install -y cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb xauth \
-    zip unzip mtools genisoimage nsis x11-apps imagemagick xdotool clang libclang-rt-18-dev
+    zip unzip mtools genisoimage nsis x11-apps imagemagick xdotool clang libclang-rt-18-dev \
+    fonts-liberation
 
 cmake --preset host  && cmake --build --preset host  && ctest --preset host
 cmake --preset win95 && cmake --build --preset win95 && xvfb-run -a ctest --preset win95
@@ -55,7 +56,8 @@ use a virtual desktop once, then screenshot an Xvfb display:
 wine reg add 'HKCU\Software\Wine\Explorer' /v Desktop /d Default /f
 wine reg add 'HKCU\Software\Wine\Explorer\Desktops' /v Default /d 800x600 /f
 Xvfb :77 -screen 0 800x600x24 & sleep 1
-DISPLAY=:77 wine build/win95/src/platform/win32/TACHYON.exe & sleep 8
+DISPLAY=:77 wine build/win95/src/platform/win32/TACHYON.exe \
+    --fonts 'Z:\usr\share\fonts\truetype\liberation' & sleep 8
 DISPLAY=:77 xwd -root -silent | convert xwd:- shot.png    # then Read shot.png
 wineserver -k
 ```
@@ -63,8 +65,11 @@ wineserver -k
 With the virtual desktop set, every Wine program needs a display, even
 console ones like FETCH.EXE: run them with `DISPLAY` set or under `xvfb-run`.
 
-Wine lacks Windows 95's fonts (Arial, Times New Roman), so text looks a
-little different from the real thing.
+Wine lacks Windows 95's fonts (Arial, Times New Roman), so `--fonts` points
+Tachyon at the Liberation fonts, which have the same metrics; text still
+looks a little different from the real thing. Maximise the window with
+`xdotool key alt+space x` rather than resizing it with `xdotool
+windowsize`, which Wine's virtual desktop doesn't pass on to the program.
 
 To drive the UI, `xdotool` can type and press keys in the Xvfb display
 (`xdotool key ctrl+l; xdotool type example.com; xdotool key Return`). For
@@ -97,6 +102,25 @@ starts at `id="parsing"`).
 `tools/fuzz.sh [SECONDS]` fuzzes the parser with libFuzzer, AddressSanitizer
 and UBSan (`apt-get install clang libclang-rt-18-dev`). Run it after
 changing the tokenizer or tree builder; crashes land in `build/fuzz/crashes`.
+
+### Rendering and the reference tests
+
+`build/host/tools/render/tachyon-render [--width N] [--boxes] page.html
+out.png` renders a page file to PNG on the host (`--boxes` prints the box
+tree), the quickest way to see a layout change. `tachyon-fetch --render
+[--png FILE] URL` does the same for a URL, style sheets and all, and prints
+timings; FETCH.EXE does it under Wine and on Windows 95.
+
+`tests/reftests` holds reference tests: each line of `reftest.list` pairs a
+test page with a reference page, built differently, that must render to
+the same pixels at 400x300 (`==`, or differently for `!=`). They run under ctest, natively and under
+Wine, with the Liberation fonts. Add one for each layout or painting
+feature, and give pages `<meta charset="utf-8">`. Layout's unit tests
+(`tests/test_layout.c`) use the box font, so they don't depend on fonts.
+
+After changing CSS parsing, styles, layout or painting, run
+`tools/fuzz.sh SECONDS JOBS render`, which feeds pages and style sheets
+through the whole pipeline.
 
 ### Crash reports
 
