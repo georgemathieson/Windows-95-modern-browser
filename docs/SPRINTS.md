@@ -49,7 +49,7 @@ does not remember anything between sessions; this board does.
 - [x] The browser shows rendered pages by default (View > Page), with the document tree and source one menu away; scrolling by scroll bar, wheel and keyboard; links show a hand and their address in the status bar, and clicking one follows it (`#fragment` links scroll); window resizing lays the page out again; `about:` pages are HTML
 - [x] Loading: stylesheets fetched after the page, over kept-alive connections reused per host, with a small in-memory cache (decision 30)
 - [x] Reference tests: `tachyon-render` lays out and paints a page to PNG on the host; reftests compare a test page with its reference pixel for pixel under ctest, natively and under Wine
-- [ ] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
+- [x] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
 - [ ] **George reads a Wikipedia article in Tachyon on Windows 95** (the demo)
 - [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. PR #4 is merged, but `main` has moved on to 0.3.0 with PR #5, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
 
