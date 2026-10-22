@@ -5,7 +5,8 @@
 
 #include <windows.h>
 
-#include "tc_base.h"
+#include "tc_fetch.h"
+#include "tc_font.h"
 #include "tw_log.h"
 
 #define TW_SHELL_CLASS "TachyonFrame"
@@ -18,6 +19,9 @@ typedef struct tw_shell_options {
     const char *proxy_host; /* an HTTP proxy, or NULL; must outlive the window */
     uint16_t proxy_port;
     tw_last_run last_run;   /* a crash last time gets a note on the home page */
+    tc_font_set *fonts;     /* these three last as long as the process: */
+    tc_conn_pool *pool;     /* loads still running when the window closes */
+    tc_cache *cache;        /* go on using them */
 } tw_shell_options;
 
 int tw_shell_register(HINSTANCE instance);

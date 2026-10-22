@@ -281,6 +281,12 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len)
     return n;
 }
 
+void tc_tls_set_io(tc_tls *t, uint32_t timeout_ms, const volatile int *cancel)
+{
+    t->timeout_ms = timeout_ms;
+    t->cancel = cancel;
+}
+
 int tc_tls_connect(tc_socket *sock, const char *host, uint32_t timeout_ms, const volatile int *cancel,
                    tc_tls **out, tc_tls_info *info)
 {

@@ -20,7 +20,7 @@ set_target_properties(tachyon PROPERTIES OUTPUT_NAME TACHYON)
 # windres needs the generated version header and the icon next to the .rc.
 target_include_directories(tachyon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_source_files_properties(tachyon.rc PROPERTIES
-  OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/res/tachyon.ico)
+  OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/tachyon.ico;${CMAKE_CURRENT_SOURCE_DIR}/res/hand.cur")
 
 tachyon_win95_check(tachyon)
 

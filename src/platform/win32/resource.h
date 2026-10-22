@@ -15,8 +15,9 @@
 #define IDM_EDIT_SELECTALL  1104
 #define IDM_VIEW_STOP       1201
 #define IDM_VIEW_RELOAD     1202
-#define IDM_VIEW_TREE       1203
-#define IDM_VIEW_SOURCE     1204
+#define IDM_VIEW_PAGE       1203
+#define IDM_VIEW_TREE       1204
+#define IDM_VIEW_SOURCE     1205
 #define IDM_GO_BACK         1301
 #define IDM_GO_FORWARD      1302
 #define IDM_GO_HOME         1303

@@ -1,10 +1,17 @@
-/* Rendering a page from a file. */
+/* Rendering a page from a file, through tc_page with file: URLs. */
+#ifndef _WIN32
+#define _XOPEN_SOURCE 700 /* realpath */
+#endif
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "render_page.h"
-#include "tc_html_parser.h"
+#include "tc_page.h"
 #include "tc_platform.h"
 
 static int read_file(const char *path, tc_buf *out)
@@ -23,117 +30,110 @@ static int read_file(const char *path, tc_buf *out)
     return TC_OK;
 }
 
-/* A URL relative to base's directory, as a file path (local, relative
-   references only: no scheme, query or fragment). */
-static int resolve(const char *base, const char *url, char *out, size_t size)
+static int hex(int c)
 {
-    const char *slash = strrchr(base, '/'), *bslash = strrchr(base, '\\');
-    size_t dir, len = strcspn(url, "?#");
-    if (strchr(url, ':') || len == 0)
+    return c >= '0' && c <= '9' ? c - '0' : (c | 32) >= 'a' && (c | 32) <= 'f' ? (c | 32) - 'a' + 10 : -1;
+}
+
+/* A file: URL's path, as a file name. */
+static int url_to_path(const char *url, char *out, size_t size)
+{
+    const char *p;
+    size_t n = 0;
+    if (strncmp(url, "file://", 7) != 0)
         return 0;
-    if (bslash && (!slash || bslash > slash))
-        slash = bslash;
-    dir = slash ? (size_t)(slash - base) + 1 : 0;
-    if (url[0] == '/')
-        dir = 0;
-    if (dir + len + 1 > size)
+    p = strchr(url + 7, '/');
+    if (!p)
         return 0;
-    memcpy(out, base, dir);
-    memcpy(out + dir, url, len);
-    out[dir + len] = '\0';
+#ifdef _WIN32
+    if (p[1] && p[2] == ':')
+        p++; /* /C:/... */
+#endif
+    for (; *p && *p != '?' && *p != '#' && n + 1 < size; p++) {
+        if (*p == '%' && hex(p[1]) >= 0 && hex(p[2]) >= 0) {
+            out[n++] = (char)(hex(p[1]) * 16 + hex(p[2]));
+            p += 2;
+        } else {
+            out[n++] = *p;
+        }
+    }
+    out[n] = '\0';
     return 1;
 }
 
-static tc_stylesheet *load_sheet(const char *path, int quirks, int depth)
+/* A file name as a file: URL. */
+static int path_to_url(const char *path, char *out, size_t size)
 {
-    tc_buf bytes, text;
-    tc_stylesheet *sheet = NULL;
+    char full[4096];
     size_t i;
-    tc_buf_init(&bytes);
-    tc_buf_init(&text);
-    if (read_file(path, &bytes) == TC_OK) {
-        tc_css_decode(bytes.data ? bytes.data : "", bytes.len, NULL, NULL, &text);
-        sheet = tc_stylesheet_parse(text.len ? tc_buf_cstr(&text) : "", text.len, TC_ORIGIN_AUTHOR, quirks, path);
-    }
-    tc_buf_free(&bytes);
-    tc_buf_free(&text);
-    for (i = 0; sheet && depth < 4 && i < tc_stylesheet_import_count(sheet); i++) {
-        char sub[1024];
-        if (resolve(path, tc_stylesheet_import_url(sheet, i), sub, sizeof sub))
-            tc_stylesheet_set_import(sheet, i, load_sheet(sub, quirks, depth + 1));
-    }
-    return sheet;
+#ifdef _WIN32
+    if (!GetFullPathNameA(path, sizeof full, full, NULL))
+        return 0;
+#else
+    if (!realpath(path, full))
+        return 0;
+#endif
+    for (i = 0; full[i]; i++)
+        if (full[i] == '\\')
+            full[i] = '/';
+    return snprintf(out, size, "file://%s%s", full[0] == '/' ? "" : "/", full) < (int)size;
+}
+
+static int fetch_file(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size)
+{
+    char path[4096];
+    (void)ctx;
+    (void)charset_size;
+    charset[0] = '\0';
+    return url_to_path(url, path, sizeof path) ? read_file(path, body) : TC_ERR_UNSUPPORTED;
 }
 
 int render_file(const char *path, tc_font_set *fonts, int w, int h, int full, int dump, rendered *out)
 {
     tc_buf html;
-    tc_html_page page;
-    tc_style_source *sources = NULL;
-    size_t count = 0, i;
-    tc_styled *styled = NULL;
-    tc_layout *layout = NULL;
-    tc_media_env env;
-    uint32_t t0, t1, t2, t3;
-    int err, quirks;
+    tc_html_page parsed;
+    tc_page page;
+    char url[4200];
+    uint32_t t0, t1;
+    int err;
 
     memset(out, 0, sizeof *out);
     tc_buf_init(&out->boxes);
     tc_buf_init(&html);
-    err = read_file(path, &html);
-    if (err) {
+    if (!path_to_url(path, url, sizeof url) || (err = read_file(path, &html)) != TC_OK) {
         tc_buf_free(&html);
-        return err;
+        return TC_ERR_INVALID;
     }
     t0 = tc_time_ms();
-    err = tc_html_parse_page(html.data ? html.data : "", html.len, NULL, NULL, &page);
+    err = tc_html_parse_page(html.data ? html.data : "", html.len, NULL, NULL, &parsed);
     tc_buf_free(&html);
     if (err) {
-        tc_html_page_free(&page);
+        tc_html_page_free(&parsed);
         return err;
     }
-    quirks = page.doc->mode == TC_QUIRKS;
-    err = tc_style_sources(page.doc, &sources, &count);
-    for (i = 0; err == TC_OK && i < count; i++) {
-        char sheet_path[1024];
-        if (sources[i].href && resolve(path, sources[i].href, sheet_path, sizeof sheet_path))
-            sources[i].sheet = load_sheet(sheet_path, quirks, 0);
-        else if (sources[i].sheet) {
-            size_t k;
-            for (k = 0; k < tc_stylesheet_import_count(sources[i].sheet); k++)
-                if (resolve(path, tc_stylesheet_import_url(sources[i].sheet, k), sheet_path, sizeof sheet_path))
-                    tc_stylesheet_set_import(sources[i].sheet, k, load_sheet(sheet_path, quirks, 1));
-        }
-    }
+    err = tc_page_init(&page, url, &parsed);
+    if (!err)
+        err = tc_page_load_styles(&page, fetch_file, NULL, NULL);
     t1 = tc_time_ms();
-    env.width = env.device_width = (float)w;
-    env.height = env.device_height = (float)h;
-    env.color_bits = 8;
-    if (err == TC_OK)
-        err = tc_style_document(page.doc, sources, count, &env, NULL, &styled);
-    t2 = tc_time_ms();
-    if (err == TC_OK)
-        err = tc_layout_document(page.doc, styled, fonts, (float)w, (float)h, &layout);
-    t3 = tc_time_ms();
-    if (err == TC_OK) {
-        tc_layout_size(layout, &out->doc_w, &out->doc_h);
+    if (!err)
+        err = tc_page_layout(&page, fonts, (float)w, (float)h);
+    if (!err) {
+        tc_layout_size(page.layout, &out->doc_w, &out->doc_h);
         err = tc_surface_init(&out->surface, w, full ? (int)(out->doc_h + 0.5f) : h);
     }
-    if (err == TC_OK) {
-        tc_paint(layout, &out->surface, tc_rect_make(0, 0, out->surface.width, out->surface.height), 0, 0);
-        out->paint_ms = tc_time_ms() - t3;
-        tc_styled_stats(styled, &out->style);
-        tc_layout_stats_of(layout, &out->layout);
+    if (!err) {
+        uint32_t t2 = tc_time_ms();
+        tc_paint(page.layout, &out->surface, tc_rect_make(0, 0, out->surface.width, out->surface.height), 0, 0);
+        out->paint_ms = tc_time_ms() - t2;
+        tc_styled_stats(page.styled, &out->style);
+        tc_layout_stats_of(page.layout, &out->layout);
         if (dump)
-            tc_layout_dump(layout, &out->boxes);
+            tc_layout_dump(page.layout, &out->boxes);
     }
     out->parse_ms = t1 - t0;
-    out->style_ms = t2 - t1;
-    out->layout_ms = t3 - t2;
-    tc_layout_free(layout);
-    tc_styled_free(styled);
-    tc_style_sources_free(sources, count);
-    tc_html_page_free(&page);
+    out->style_ms = page.style_ms;
+    out->layout_ms = page.layout_ms;
+    tc_page_free(&page);
     return err;
 }
 

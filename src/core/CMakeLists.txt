@@ -85,6 +85,7 @@ add_library(tachyon_core STATIC
   tc_log.c
   tc_mime.c
   tc_outline.c
+  tc_page.c
   tc_paint.c
   tc_png.c
   tc_selector.c

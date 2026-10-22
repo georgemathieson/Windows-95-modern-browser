@@ -3,6 +3,7 @@
 #include "tc_version.h"
 
 IDI_TACHYON ICON "res/tachyon.ico"
+HAND CURSOR "res/hand.cur"
 
 IDR_MAINMENU MENU
 BEGIN
@@ -25,6 +26,7 @@ BEGIN
         MENUITEM "&Stop\tEsc",                  IDM_VIEW_STOP
         MENUITEM "&Reload\tF5",                 IDM_VIEW_RELOAD
         MENUITEM SEPARATOR
+        MENUITEM "&Page",                       IDM_VIEW_PAGE
         MENUITEM "Document &Tree",              IDM_VIEW_TREE
         MENUITEM "Page &Source\tCtrl+U",        IDM_VIEW_SOURCE
     END

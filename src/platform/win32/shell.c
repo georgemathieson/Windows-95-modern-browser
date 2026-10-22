@@ -30,7 +30,7 @@ typedef struct shell {
     HWND hwnd;
     HINSTANCE instance;
     HWND buttons[5];
-    HWND address_label, address, go, view, status;
+    HWND address_label, address, go, view, status_bar;
     HFONT gui_font;
     HWND last_focus;
     int exit_code;
@@ -40,10 +40,15 @@ typedef struct shell {
     int history_pos; /* index of the current page, -1 when empty */
 
     tw_load *load;   /* the page being loaded, NULL when idle */
-    int show_source; /* show pages' source instead of their document tree */
+    tw_view_mode mode; /* the page, its tree or its source */
     const char *proxy_host;
     uint16_t proxy_port;
     tw_last_run last_run;
+    tc_font_set *fonts;
+    tc_conn_pool *pool;
+    tc_cache *cache;
+    char status[400]; /* the status text, shown again when the mouse leaves a link */
+    int hovering;
 } shell;
 
 static const struct {
@@ -76,7 +81,9 @@ static char *copy_string(const char *s)
 
 static void set_status(shell *sh, const char *text)
 {
-    SendMessageA(sh->status, SB_SETTEXTA, 0, (LPARAM)text);
+    snprintf(sh->status, sizeof sh->status, "%s", text);
+    if (!sh->hovering)
+        SendMessageA(sh->status_bar, SB_SETTEXTA, 0, (LPARAM)text);
 }
 
 /* Text from the ANSI world (address bar, command line) as UTF-8. */
@@ -148,6 +155,9 @@ static void show_about_page(shell *sh, const char *url)
     } else if (strcmp(url, "about:blank") == 0) {
         tw_view_show_blank(sh->view);
         set_title(sh, url);
+    } else if (strcmp(url, "about:fonts") == 0) {
+        tw_view_show_fonts(sh->view);
+        set_title(sh, "Fonts");
     } else {
         tw_view_show_message(sh->view, url, "Page not found", "Tachyon doesn't have a page with that name.",
                              "Try about:tachyon.");
@@ -156,9 +166,10 @@ static void show_about_page(shell *sh, const char *url)
     set_status(sh, "Done");
 }
 
-static void show_current(shell *sh)
+static void show_current(shell *sh, int reload)
 {
     const char *url = sh->history[sh->history_pos];
+    tw_load_options opts;
 
     cancel_load(sh);
     tc_log("open %.130s", url);
@@ -166,7 +177,15 @@ static void show_current(shell *sh)
     if (strncmp(url, "about:", 6) == 0) {
         show_about_page(sh, url);
     } else {
-        sh->load = tw_load_start(sh->hwnd, url, sh->proxy_host, sh->proxy_port);
+        memset(&opts, 0, sizeof opts);
+        opts.proxy_host = sh->proxy_host;
+        opts.proxy_port = sh->proxy_port;
+        opts.fonts = sh->fonts;
+        opts.pool = sh->pool;
+        opts.cache = sh->cache;
+        opts.reload = reload;
+        tw_view_page_size(sh->view, &opts.width, &opts.height);
+        sh->load = tw_load_start(sh->hwnd, url, &opts);
         if (sh->load) {
             tw_view_show_message(sh->view, url, "Loading...", NULL, NULL);
             set_status(sh, "Starting...");
@@ -178,7 +197,7 @@ static void show_current(shell *sh)
     update_nav_state(sh);
 }
 
-static void navigate(shell *sh, const char *url)
+static void push_history(shell *sh, const char *url)
 {
     char *copy = copy_string(url);
     int i;
@@ -196,7 +215,46 @@ static void navigate(shell *sh, const char *url)
     }
     sh->history[sh->history_len++] = copy;
     sh->history_pos = sh->history_len - 1;
-    show_current(sh);
+}
+
+static void navigate(shell *sh, const char *url)
+{
+    push_history(sh, url);
+    if (sh->history_pos >= 0 && strcmp(sh->history[sh->history_pos], url) == 0)
+        show_current(sh, 0);
+}
+
+/* A followed link: another place in the same page just scrolls there. */
+static void follow(shell *sh, const char *url_text)
+{
+    tc_url url, current;
+    int same = 0;
+
+    if (tc_url_parse(url_text, NULL, &url) != TC_OK)
+        return;
+    if (strcmp(url.scheme, "http") != 0 && strcmp(url.scheme, "https") != 0 && strcmp(url.scheme, "about") != 0) {
+        char text[300];
+        snprintf(text, sizeof text, "Tachyon can't open %s: links yet.", url.scheme);
+        MessageBeep(MB_ICONEXCLAMATION);
+        set_status(sh, text);
+        tc_url_free(&url);
+        return;
+    }
+    if (url.fragment && tc_url_parse(tw_view_url(sh->view), NULL, &current) == TC_OK) {
+        size_t a = strcspn(url.href, "#"), b = strcspn(current.href, "#");
+        same = a == b && strncmp(url.href, current.href, a) == 0;
+        tc_url_free(&current);
+    }
+    if (same && !sh->load) {
+        push_history(sh, url.href);
+        SetWindowTextA(sh->address, url.href);
+        if (!tw_view_scroll_to_fragment(sh->view, url.fragment))
+            set_status(sh, "That part of the page isn't there.");
+        update_nav_state(sh);
+    } else {
+        navigate(sh, url.href);
+    }
+    tc_url_free(&url);
 }
 
 /* Turn typed (ANSI) text into a URL and go there. 0 if it isn't one. */
@@ -240,9 +298,19 @@ static void on_progress(shell *sh, tw_load *load)
 
     if (load != sh->load)
         return; /* an abandoned load */
-    if (load->parsing) {
+    switch (load->stage) {
+    case TW_STAGE_READING:
         set_status(sh, "Reading the page...");
         return;
+    case TW_STAGE_STYLES:
+        snprintf(text, sizeof text, "Loading style sheet %u: %s", load->sheet, load->sheet_url);
+        set_status(sh, text);
+        return;
+    case TW_STAGE_LAYOUT:
+        set_status(sh, "Laying out the page...");
+        return;
+    default:
+        break;
     }
     switch (load->phase) {
     case TC_FETCH_RESOLVING:
@@ -371,16 +439,27 @@ static void show_response(shell *sh, tw_load *load)
     }
     SetWindowTextA(sh->address, sh->history[sh->history_pos]);
 
+    n = snprintf(status, sizeof status, "Done: %u KB in %u.%u s%s", (unsigned)(load->body_len / 1024),
+                 (unsigned)(r->elapsed_ms / 1000), (unsigned)(r->elapsed_ms % 1000 / 100),
+                 r->cached ? " (from memory)" : "");
+    if (load->has_page) {
+        uint32_t laid = load->parse_ms + load->styles_ms + load->page.style_ms + load->page.layout_ms;
+        n += snprintf(status + n, sizeof status - (size_t)n, "; %u style sheet%s; shown in %u.%u s",
+                      load->page.sheets_loaded, load->page.sheets_loaded == 1 ? "" : "s", (unsigned)(laid / 1000),
+                      (unsigned)(laid % 1000 / 100));
+    }
     tc_buf_init(&head);
     tc_buf_printf(&head, "HTTP/1.%d %d %s\n", r->minor_version, r->status, r->status_text ? r->status_text : "");
     for (i = 0; i < r->headers.len; i++)
         tc_buf_printf(&head, "%s: %s\n", r->headers.items[i].name, r->headers.items[i].value);
     tc_buf_append_char(&head, '\n');
-    if (load->is_html) {
-        const char *doc_title = document_title(load->page.doc, title, sizeof title);
+    if (load->has_page) {
+        const char *doc_title = document_title(load->page.html.doc, title, sizeof title);
         set_title(sh, doc_title ? doc_title : sh->history[sh->history_pos]);
-        tw_view_set_show_source(sh->view, sh->show_source);
-        tw_view_show_document(sh->view, sh->history[sh->history_pos], tc_buf_cstr(&head), head.len, &load->page);
+        tw_view_set_mode(sh->view, sh->mode);
+        tw_view_show_page(sh->view, tc_buf_cstr(&head), head.len, &load->page);
+        if (r->url && strchr(r->url, '#'))
+            tw_view_scroll_to_fragment(sh->view, strchr(r->url, '#') + 1);
     } else {
         set_title(sh, sh->history[sh->history_pos]);
         tw_view_show_source(sh->view, sh->history[sh->history_pos], tc_buf_cstr(&head), head.len,
@@ -388,11 +467,6 @@ static void show_response(shell *sh, tw_load *load)
     }
     tc_buf_free(&head);
 
-    n = snprintf(status, sizeof status, "Done: %u KB in %u.%u s", (unsigned)(load->body_len / 1024),
-                 (unsigned)(r->elapsed_ms / 1000), (unsigned)(r->elapsed_ms % 1000 / 100));
-    if (load->is_html)
-        n += snprintf(status + n, sizeof status - (size_t)n, ", read in %u.%u s", (unsigned)(load->parse_ms / 1000),
-                      (unsigned)(load->parse_ms % 1000 / 100));
     if (r->tls.version[0])
         snprintf(status + n, sizeof status - (size_t)n, ". Secure: %s, %s", r->tls.version, r->tls.cipher);
     else
@@ -451,15 +525,19 @@ static void edit_command(UINT message, WPARAM wp, LPARAM lp)
         SendMessageA(focus, message, wp, lp);
 }
 
-/* Pages show their document tree or their source. */
-static void set_show_source(shell *sh, int show_source)
+/* Pages show themselves, their document tree or their source. */
+static void set_mode(shell *sh, tw_view_mode mode)
 {
-    sh->show_source = show_source;
-    tc_log("view: %s", show_source ? "page source" : "document tree");
-    CheckMenuRadioItem(GetMenu(sh->hwnd), IDM_VIEW_TREE, IDM_VIEW_SOURCE, show_source ? IDM_VIEW_SOURCE : IDM_VIEW_TREE,
-                       MF_BYCOMMAND);
-    if (!tw_view_set_show_source(sh->view, show_source))
-        set_status(sh, show_source ? "Pages will show their source." : "Pages will show their document tree.");
+    static const char *const names[] = { "page", "document tree", "page source" };
+    static const int items[] = { IDM_VIEW_PAGE, IDM_VIEW_TREE, IDM_VIEW_SOURCE };
+    char text[100];
+    sh->mode = mode;
+    tc_log("view: %s", names[mode]);
+    CheckMenuRadioItem(GetMenu(sh->hwnd), IDM_VIEW_PAGE, IDM_VIEW_SOURCE, items[mode], MF_BYCOMMAND);
+    if (!tw_view_set_mode(sh->view, mode)) {
+        snprintf(text, sizeof text, "Pages will show their %s.", mode == TW_MODE_PAGE ? "contents" : names[mode]);
+        set_status(sh, text);
+    }
 }
 
 static void on_command(shell *sh, int id)
@@ -493,25 +571,28 @@ static void on_command(shell *sh, int id)
         break;
     case IDM_VIEW_RELOAD:
         if (sh->history_pos >= 0)
-            show_current(sh);
+            show_current(sh, 1);
+        break;
+    case IDM_VIEW_PAGE:
+        set_mode(sh, TW_MODE_PAGE);
         break;
     case IDM_VIEW_TREE:
-        set_show_source(sh, 0);
+        set_mode(sh, TW_MODE_TREE);
         break;
     case IDM_VIEW_SOURCE:
-        /* The menu item picks the source; Ctrl+U toggles. */
-        set_show_source(sh, GetKeyState(VK_CONTROL) < 0 ? !sh->show_source : 1);
+        /* The menu item picks the source; Ctrl+U goes back and forth. */
+        set_mode(sh, GetKeyState(VK_CONTROL) < 0 && sh->mode == TW_MODE_SOURCE ? TW_MODE_PAGE : TW_MODE_SOURCE);
         break;
     case IDM_GO_BACK:
         if (sh->history_pos > 0) {
             sh->history_pos--;
-            show_current(sh);
+            show_current(sh, 0);
         }
         break;
     case IDM_GO_FORWARD:
         if (sh->history_pos < sh->history_len - 1) {
             sh->history_pos++;
-            show_current(sh);
+            show_current(sh, 0);
         }
         break;
     case IDM_GO_HOME:
@@ -563,9 +644,9 @@ static int create_children(shell *sh)
     sh->address_label = child(sh, 0, "STATIC", "Address:", SS_LEFT, IDC_ADDRESS_LABEL);
     sh->address = child(sh, WS_EX_CLIENTEDGE, "EDIT", "", ES_AUTOHSCROLL | WS_TABSTOP, IDC_ADDRESS);
     sh->go = child(sh, 0, "BUTTON", "Go", BS_PUSHBUTTON, IDM_GO_ADDRESS);
-    sh->view = tw_view_create(sh->hwnd, sh->instance, IDC_VIEW);
-    sh->status = CreateStatusWindowA(WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, "Ready", sh->hwnd, IDC_STATUS);
-    if (!sh->address_label || !sh->address || !sh->go || !sh->view || !sh->status)
+    sh->view = tw_view_create(sh->hwnd, sh->instance, IDC_VIEW, sh->fonts);
+    sh->status_bar = CreateStatusWindowA(WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, "Ready", sh->hwnd, IDC_STATUS);
+    if (!sh->address_label || !sh->address || !sh->go || !sh->view || !sh->status_bar)
         return 0;
     edit_proc = (WNDPROC)SetWindowLongA(sh->address, GWL_WNDPROC, (LONG)address_proc);
     return 1;
@@ -584,8 +665,8 @@ static void layout(shell *sh, int width, int height)
     MoveWindow(sh->go, width - GO_W - GAP, y, GO_W, ADDRESS_H, TRUE);
     view_top = y + ADDRESS_H + GAP;
 
-    SendMessageA(sh->status, WM_SIZE, 0, 0);
-    GetWindowRect(sh->status, &status);
+    SendMessageA(sh->status_bar, WM_SIZE, 0, 0);
+    GetWindowRect(sh->status_bar, &status);
     status_h = status.bottom - status.top;
     MoveWindow(sh->view, 0, view_top, width, height - view_top - status_h, TRUE);
 }
@@ -646,6 +727,22 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_TW_DONE:
         on_done(sh, (tw_load *)lp);
+        return 0;
+    case WM_TW_HOVER:
+        /* A link's address in the status bar while the mouse is on it. */
+        if (lp) {
+            char ansi[600];
+            utf8_to_ansi((const char *)lp, strlen((const char *)lp), ansi, sizeof ansi);
+            sh->hovering = 1;
+            SendMessageA(sh->status_bar, SB_SETTEXTA, 0, (LPARAM)ansi);
+        } else {
+            sh->hovering = 0;
+            SendMessageA(sh->status_bar, SB_SETTEXTA, 0, (LPARAM)sh->status);
+        }
+        return 0;
+    case WM_TW_FOLLOW:
+        sh->hovering = 0;
+        follow(sh, (const char *)lp);
         return 0;
     case WM_SIZE:
         layout(sh, LOWORD(lp), HIWORD(lp));
@@ -721,6 +818,9 @@ HWND tw_shell_create(HINSTANCE instance, const tw_shell_options *opts)
     sh->proxy_host = opts->proxy_host;
     sh->proxy_port = opts->proxy_port;
     sh->last_run = opts->last_run;
+    sh->fonts = opts->fonts;
+    sh->pool = opts->pool;
+    sh->cache = opts->cache;
     hwnd = CreateWindowExA(0, TW_SHELL_CLASS, TC_NAME, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                            CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, instance, sh);
     if (!hwnd) {
@@ -729,7 +829,7 @@ HWND tw_shell_create(HINSTANCE instance, const tw_shell_options *opts)
     }
 
     show_warnings(sh);
-    CheckMenuRadioItem(GetMenu(hwnd), IDM_VIEW_TREE, IDM_VIEW_SOURCE, IDM_VIEW_TREE, MF_BYCOMMAND);
+    CheckMenuRadioItem(GetMenu(hwnd), IDM_VIEW_PAGE, IDM_VIEW_SOURCE, IDM_VIEW_PAGE, MF_BYCOMMAND);
     if (!opts->start_url || !navigate_typed(sh, opts->start_url))
         navigate(sh, TW_HOME_URL);
 

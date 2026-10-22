@@ -58,8 +58,10 @@ add_executable(tachyon_tests
   test_fixup.c
   test_font.c
   test_html.c
+  test_layout.c
   test_log.c
   test_net.c
+  test_page.c
   test_platform.c
   test_selector.c
   test_style.c

@@ -45,6 +45,17 @@ PAGE = ("""<!DOCTYPE html>
 """).encode("windows-1252")
 
 
+STYLED = (b'<!DOCTYPE html><title>Styled</title><link rel="stylesheet" href="style.css">'
+          b'<link rel="stylesheet" href="/missing.css"><h1>Styled</h1><p>A paragraph with '
+          b'<a href="/hello">a link</a>.</p><ul><li>one<li>two</ul>')
+
+
+LONG = (b'<!DOCTYPE html><title>A long page</title><p><a href="#end">Jump to the end</a></p>' +
+        b"".join(b"<p>Paragraph %d. Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod "
+                 b"tempor incididunt ut labore et dolore magna aliqua.</p>" % i for i in range(1, 121)) +
+        b'<h2 id="end">The end</h2><p><a href="#">Back to the top</a></p>')
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "TachyonTestServer/1"
@@ -98,6 +109,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, b"finally\n")
         elif path == "/page":
             self.reply(200, PAGE, [("Content-Type", "text/html")])
+        elif path == "/styled":
+            self.reply(200, STYLED, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/long":
+            self.reply(200, LONG, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/style.css":
+            self.reply(200, b'@import "more.css"; p { color: navy }', [("Content-Type", "text/css")])
+        elif path == "/more.css":
+            self.reply(200, b"body { margin: 20px }", [("Content-Type", "text/css; charset=utf-8")])
         elif path == "/headers":
             self.reply(200, "".join("%s: %s\n" % kv for kv in self.headers.items()).encode())
         else:
@@ -244,6 +263,12 @@ def main():
         ("http through a proxy", ["--proxy", "127.0.0.1:%d" % proxy, url(http_port, "/hello", "http")], True,
          ["Hello from the test server"], []),
         ("unsupported scheme", ["ftp://localhost/"], False, [], ["can't load ftp"]),
+        ("keep-alive", ["--cacert", ca, url(rsa, "/hello"), url(rsa, "/chunked"), url(rsa, "/close"),
+                        url(rsa, "/gzip")], True,
+         ["Hello from the test server", "chunk one", "delimited by closing", TEXT.decode()],
+         ["2 connections opened, 2 reused"]),
+        ("render", ["--render", url(http_port, "/styled", "http")], True, [],
+         ["2 style sheets (1 failed)", "rendered 800x", "1 connections opened, 3 reused"]),
         ("document tree", ["--dom", url(http_port, "/page", "http")], True,
          ["| <!DOCTYPE html>", '|       "Caf\u00e9 cr\u00e8me & caf\u00e9 au lait\u00a0\u20ac5', "|     <svg svg>",
           '|       viewBox="0 0 10 10"', "|     <template>", "|       content", '|     "stray text"'],
