@@ -12,6 +12,7 @@ struct tc_layout {
     const tc_document *doc;
     const tc_styled *styled;
     tc_font_set *fonts;
+    tc_image_source images;    /* zeroed when there are none */
     float vw, vh;              /* the viewport */
     tc_box *root;              /* the initial containing block */
     float doc_w, doc_h;

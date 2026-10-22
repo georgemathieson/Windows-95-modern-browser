@@ -40,6 +40,10 @@ NEWER = [
     (re.compile(r"%mm\d"), "MMX register"),
 ]
 ISA_PATTERNS = {"i586": [P6_ONLY] + NEWER, "i686": NEWER}
+# Tables of pointers that MinGW's linker puts in .text: objdump disassembles
+# their bytes, which can look like anything (an address 0x00550F60 holds
+# 0F 55, "andnps").
+DATA_IN_TEXT = re.compile(r"^(__CTOR_LIST__|__DTOR_LIST__|\.ctors(\..*)?|\.dtors(\..*)?)$")
 
 
 class PEError(Exception):
@@ -158,6 +162,8 @@ def check_isa(path, objdump, isa):
         m = re.match(r"^[0-9a-f]+ <(.+)>:$", line)
         if m:
             function = m.group(1)
+            continue
+        if DATA_IN_TEXT.match(function):
             continue
         for pattern, what in ISA_PATTERNS[isa]:
             hit = pattern.search(line)

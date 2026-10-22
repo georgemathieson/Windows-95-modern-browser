@@ -12,12 +12,14 @@ for trying the browser by hand. Python standard library only.
 """
 
 import argparse
+import base64
 import gzip
 import http.server
 import os
 import socket
 import socketserver
 import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -25,6 +27,9 @@ import time
 import zlib
 
 TEXT = b"Tachyon: the modern web, sent back to 1995.\n" * 50
+# TEXT compressed with Brotli (Python's brotli module), so the server needs
+# no encoder of its own.
+TEXT_BR = base64.b64decode("G5cI4BWh0nVyfsQLH+S1tqiwBRtwwB4kEBAtYpftlqVVbMjZv8OR7SpYlaH4NW8CAAAA")
 
 # A page for trying the document tree: windows-1252, declared only in a
 # <meta>, with the parser's harder cases (misnested tags, a table with stray
@@ -48,6 +53,27 @@ PAGE = ("""<!DOCTYPE html>
 STYLED = (b'<!DOCTYPE html><title>Styled</title><link rel="stylesheet" href="style.css">'
           b'<link rel="stylesheet" href="/missing.css"><h1>Styled</h1><p>A paragraph with '
           b'<a href="/hello">a link</a>.</p><ul><li>one<li>two</ul>')
+
+
+PICTURES = (b'<!DOCTYPE html><title>Pictures</title><style>body { background: url(/dot.png) }</style>'
+            b'<p><img src="/dot.png" alt="a dot"> <img srcset="/missing.png 1x" alt="missing">'
+            b' <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=" alt="inline">')
+# A web font, in WOFF2: the first src is missing, and the second face's
+# range isn't used, so one font is fetched after one failure.
+WEBFONT = (b'<!DOCTYPE html><meta charset=utf-8><style>'
+           b'@font-face { font-family: Web; src: url(/missing.woff2), url(/font.woff2) format("woff2") }'
+           b'@font-face { font-family: Web; src: url(/cyrillic.woff2); unicode-range: U+400-4FF }'
+           b'p { font-family: Web, sans-serif }</style><p>\xe4\xb8\xad\xe6\x97\xa5')
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "fonts")
+
+
+def tiny_png():
+    """A 2x2 red PNG."""
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    raw = b"".join(b"\0" + b"\xff\0\0" * 2 for _ in range(2))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 LONG = (b'<!DOCTYPE html><title>A long page</title><p><a href="#end">Jump to the end</a></p>' +
@@ -88,6 +114,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, gzip.compress(TEXT), [("Content-Encoding", "gzip")])
         elif path == "/deflate":
             self.reply(200, zlib.compress(TEXT), [("Content-Encoding", "deflate")])
+        elif path == "/br":
+            self.reply(200, TEXT_BR, [("Content-Encoding", "br")])
         elif path == "/close":
             self.send_response(200)
             self.send_header("Connection", "close")
@@ -113,6 +141,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, STYLED, [("Content-Type", "text/html; charset=utf-8")])
         elif path == "/long":
             self.reply(200, LONG, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/pictures":
+            self.reply(200, PICTURES, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/webfont":
+            self.reply(200, WEBFONT, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/font.woff2":
+            with open(os.path.join(FONT_DIR, "tachyon-test-cjk.woff2"), "rb") as f:
+                self.reply(200, f.read(), [("Content-Type", "font/woff2")])
+        elif path == "/dot.png":
+            self.reply(200, tiny_png(), [("Content-Type", "image/png")])
         elif path == "/style.css":
             self.reply(200, b'@import "more.css"; p { color: navy }', [("Content-Type", "text/css")])
         elif path == "/more.css":
@@ -239,10 +276,11 @@ def main():
         ("https, ECDSA, TLS 1.2", ["--cacert", ca, url(ecdsa12, "/hello")], True,
          ["Hello from the test server"], ["TLSv1.2", "ECDHE-ECDSA"]),
         ("headers sent", ["--cacert", ca, url(rsa, "/headers")], True,
-         ["User-Agent: Mozilla/5.0 (Windows 95) Tachyon/", "Accept-Encoding: gzip, deflate"], []),
+         ["User-Agent: Mozilla/5.0 (Windows 95) Tachyon/", "Accept-Encoding: gzip, deflate, br"], []),
         ("chunked body", ["--cacert", ca, url(rsa, "/chunked")], True, ["chunk one, chunk two, the end"], []),
         ("gzip body", ["--cacert", ca, url(rsa, "/gzip")], True, [TEXT.decode()], ["%d bytes" % len(TEXT)]),
         ("deflate body", ["--cacert", ca, url(rsa, "/deflate")], True, [TEXT.decode()], []),
+        ("brotli body", ["--cacert", ca, url(rsa, "/br")], True, [TEXT.decode()], ["%d bytes" % len(TEXT)]),
         ("body until close", [url(http_port, "/close", "http")], True, ["delimited by closing"], []),
         ("redirect chain", ["--cacert", ca, url(rsa, "/redirect/3")], True,
          ["Hello from the test server"], ["4 redirects", "/hello"]),
@@ -269,6 +307,10 @@ def main():
          ["2 connections opened, 2 reused"]),
         ("render", ["--render", url(http_port, "/styled", "http")], True, [],
          ["2 style sheets (1 failed)", "rendered 800x", "1 connections opened, 3 reused"]),
+        ("pictures", ["--render", url(http_port, "/pictures", "http")], True, [],
+         ["3 images (1 failed)", "1 connections opened, 2 reused"]),
+        ("web fonts", ["--render", url(http_port, "/webfont", "http")], True, [],
+         ["font 2: http://localhost:%d/font.woff2" % http_port, "1 web fonts (0 failed)"]),
         ("document tree", ["--dom", url(http_port, "/page", "http")], True,
          ["| <!DOCTYPE html>", '|       "Caf\u00e9 cr\u00e8me & caf\u00e9 au lait\u00a0\u20ac5', "|     <svg svg>",
           '|       viewBox="0 0 10 10"', "|     <template>", "|       content", '|     "stray text"'],

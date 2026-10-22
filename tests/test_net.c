@@ -40,6 +40,14 @@ static const unsigned char raw_deflate_text[] = {
     0xaa, 0x76, 0x54, 0x2d, 0x45, 0x6a, 0x01,
 };
 
+/* TEXT_REPEAT twenty times, Brotli-compressed (Python's brotli module). */
+static const unsigned char br_text[] = {
+    0x1b, 0x6f, 0x03, 0xe0, 0x15, 0xa1, 0xd2, 0xdd, 0xc6, 0xee, 0xf7, 0x6c,
+    0xc7, 0x51, 0x09, 0x5a, 0x35, 0x23, 0xd8, 0x80, 0x03, 0xf6, 0x20, 0x81,
+    0x80, 0x68, 0x01, 0xb9, 0x6c, 0xb8, 0x2c, 0xad, 0x62, 0x83, 0x4a, 0xff,
+    0x0e, 0x46, 0xb6, 0x2b, 0xb3, 0x2a, 0x43, 0xf1, 0xeb, 0xdf, 0x1f, 0x00,
+};
+
 static int text_matches(const tc_buf *b)
 {
     size_t i, n = strlen(TEXT_REPEAT);
@@ -215,6 +223,9 @@ static void test_inflate_formats(void)
     tc_buf_clear(&out);
     TC_CHECK_INT(tc_inflate(TC_CODING_GZIP, gzip_two_members, sizeof gzip_two_members, 1 << 20, &out), TC_OK);
     TC_CHECK_STR(tc_buf_cstr(&out), "first member, second member");
+    tc_buf_clear(&out);
+    TC_CHECK_INT(tc_inflate(TC_CODING_BR, br_text, sizeof br_text, 1 << 20, &out), TC_OK);
+    TC_CHECK(text_matches(&out));
     tc_buf_free(&out);
 }
 
@@ -227,7 +238,15 @@ static void test_inflate_limits_and_errors(void)
     tc_buf_clear(&out);
     TC_CHECK_INT(tc_inflate(TC_CODING_GZIP, junk, sizeof junk, 1 << 20, &out), TC_ERR_DECODE);
     TC_CHECK_INT(tc_content_coding_from_header("GZIP"), TC_CODING_GZIP);
-    TC_CHECK_INT(tc_content_coding_from_header(" br"), TC_CODING_UNKNOWN);
+    TC_CHECK_INT(tc_content_coding_from_header(" br"), TC_CODING_BR);
+    TC_CHECK_INT(tc_content_coding_from_header("zstd"), TC_CODING_UNKNOWN);
+    /* Brotli: too big, corrupt, and cut short (what there is). */
+    TC_CHECK_INT(tc_inflate(TC_CODING_BR, br_text, sizeof br_text, 100, &out), TC_ERR_TOO_LARGE);
+    tc_buf_clear(&out);
+    TC_CHECK_INT(tc_inflate(TC_CODING_BR, junk, sizeof junk, 1 << 20, &out), TC_ERR_DECODE);
+    tc_buf_clear(&out);
+    TC_CHECK_INT(tc_inflate(TC_CODING_BR, br_text, sizeof br_text - 4, 1 << 20, &out), TC_OK);
+    TC_CHECK(out.len < strlen(TEXT_REPEAT) * 20);
     TC_CHECK_INT(tc_content_coding_from_header(NULL), TC_CODING_IDENTITY);
     tc_buf_free(&out);
 }

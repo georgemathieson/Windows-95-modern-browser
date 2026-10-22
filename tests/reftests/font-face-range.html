@@ -1,0 +1,15 @@
+<!DOCTYPE html><meta charset="utf-8">
+<style>
+/* One family from two fonts by unicode-range. 日 is in neither range, so
+   it comes from the installed fonts. */
+@font-face { font-family: Mixed; src: url(../data/fonts/tachyon-test-cjk.woff2); unicode-range: U+4E2D, U+3040-309F }
+@font-face { font-family: Mixed; src: url(../data/fonts/liberation-subset.woff2); unicode-range: U+0-FF }
+/* No space in its range, so not the first available font: Liberation is,
+   but this family's characters still come from it. */
+@font-face { font-family: Kana; src: url(../data/fonts/tachyon-test-cjk.woff); unicode-range: U+3040-309F }
+p { font: 20px Mixed, serif; margin: 10px }
+.k { font-family: Kana, Latin }
+@font-face { font-family: Latin; src: url(../data/fonts/liberation-subset.woff2) }
+</style>
+<p>中 Tachyon あ 日</p>
+<p class=k>Tachyon あ</p>

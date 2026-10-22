@@ -55,7 +55,7 @@ static int lay_out(laid *l, const char *body, float width)
         err = tc_style_document(l->doc, l->sources, l->count, &env, NULL, &l->styled);
     l->fonts = tc_font_set_new();
     if (!err)
-        err = l->fonts ? tc_layout_document(l->doc, l->styled, l->fonts, width, 300, &l->layout) : TC_ERR_NOMEM;
+        err = l->fonts ? tc_layout_document(l->doc, l->styled, l->fonts, NULL, width, 300, &l->layout) : TC_ERR_NOMEM;
     return err;
 }
 
@@ -246,6 +246,61 @@ static void test_lines(void)
     laid_free(&l);
 }
 
+/* The first text on a block's second line, as UTF-8 ("" if none). */
+static void second_line(const tc_box *b, char *out, size_t size)
+{
+    uint32_t i;
+    out[0] = '\0';
+    for (i = 0; i < b->nfrags; i++)
+        if (b->frags[i].type == TC_FRAG_TEXT && b->frags[i].y > b->frags[0].y) {
+            snprintf(out, size, "%.*s", (int)b->frags[i].len, b->frags[i].text);
+            return;
+        }
+}
+
+static void test_cjk_lines(void)
+{
+    laid l;
+    char text[32];
+    /* The box font: 6px a character, so five to a 30px line. */
+    LAY_OUT(&l,
+            "<div id=a style='width: 30px'>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE6\x96\x87"
+            "\xE7\xAB\xA0\xE3\x81\xA7\xE3\x81\x99</div>" /* 日本語の文章です */
+            "<div id=b style='width: 30px'>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE6\x96\x87"
+            "\xE3\x80\x82\xE3\x81\xA7\xE3\x81\x99</div>" /* 日本語の文。です */
+            "<div id=c style='width: 30px'>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE\xE3\x80\x8C"
+            "\xE6\x96\x87\xE3\x80\x8D</div>" /* 日本語の「文」 */
+            "<div id=d style='width: 30px; word-break: keep-all'>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81"
+            "\xAE\xE6\x96\x87\xE7\xAB\xA0</div>"
+            "<div id=e style='width: 40px'>abc\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81\xAE</div>"
+            "<div id=f style='width: 30px; white-space: nowrap'>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x81"
+            "\xAE\xE6\x96\x87\xE7\xAB\xA0</div>"
+            "<div id=g style='width: 30px'>\xE6\x97\xA5\xE6\x9C\xAC<b>\xE8\xAA\x9E\xE3\x81\xAE\xE6\x96\x87"
+            "\xE7\xAB\xA0</b></div>"
+            /* Characters wider than the line, which may break anywhere (this hung). */
+            "<div id=h style='width: 5px; overflow-wrap: anywhere'>\xE6\x97\xA5\xE6\x9C\xAC</div>",
+            400);
+    /* Between any two characters... */
+    CHECK_PX(box_of(&l, "a")->h, 20);
+    second_line(box_of(&l, "a"), text, sizeof text);
+    TC_CHECK_STR(text, "\xE7\xAB\xA0"); /* 章 */
+    /* ...but a full stop doesn't start a line (it goes with the character
+       before it)... */
+    second_line(box_of(&l, "b"), text, sizeof text);
+    TC_CHECK_STR(text, "\xE6\x96\x87\xE3\x80\x82"); /* 文。 */
+    /* ...and brackets stay with what they enclose. */
+    second_line(box_of(&l, "c"), text, sizeof text);
+    TC_CHECK_STR(text, "\xE3\x80\x8C\xE6\x96\x87\xE3\x80\x8D"); /* 「文」 */
+    CHECK_PX(box_of(&l, "d")->h, 10); /* keep-all */
+    /* After a Latin word, and across elements. */
+    second_line(box_of(&l, "e"), text, sizeof text);
+    TC_CHECK_STR(text, "\xE3\x81\xAE"); /* の */
+    CHECK_PX(box_of(&l, "f")->h, 10); /* nowrap */
+    CHECK_PX(box_of(&l, "g")->h, 20);
+    CHECK_PX(box_of(&l, "h")->h, 20);
+    laid_free(&l);
+}
+
 static void test_inline_blocks_and_lists(void)
 {
     laid l;
@@ -375,6 +430,7 @@ void tc_suite_layout(void)
     TC_RUN(test_block_box_model);
     TC_RUN(test_margin_collapsing);
     TC_RUN(test_lines);
+    TC_RUN(test_cjk_lines);
     TC_RUN(test_inline_blocks_and_lists);
     TC_RUN(test_hit_testing_and_size);
     TC_RUN(test_painting);

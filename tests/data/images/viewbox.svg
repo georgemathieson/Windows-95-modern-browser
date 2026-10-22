@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- before the element -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 4 4">
+  <g transform="translate(2 0)"><rect width="2" height="2" fill="lime"/></g>
+  <path d="M0 3 H4" stroke="black" stroke-width="2" fill="none"/>
+</svg>

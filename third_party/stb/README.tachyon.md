@@ -13,11 +13,18 @@ has (decision 27); `src/core/tc_font_stb.c` compiles it, with Tachyon's
 configuration: `STBTT_assert` does nothing, and the compiler warnings
 Tachyon turns on are relaxed for that one file.
 
-**No upstream file is modified.**
+stb_truetype trusts its input: it's fine for Windows' own fonts, but fonts
+downloaded from the web go through `src/core/tc_font_check.c` first
+(decision 38), and the font fuzzer runs both.
 
-stb_truetype trusts its input: it's fine for Windows' own fonts, but not for
-fonts downloaded from the web. `@font-face` (Sprint 4) needs a loader that
-checks fonts first, or a different rasteriser.
+**Local changes**, each marked "Tachyon:" in `stb_truetype.h`, found by the
+font fuzzer (UBSan):
+
+1. `ttULONG` and `ttLONG` shift each byte as unsigned: a byte of 128 or
+   more shifted into an `int`'s sign bit is undefined behaviour.
+2. A composite glyph's transformed coordinates are clamped to a `short`
+   (`stbtt__clamp16`): a float out of range converted to a `short` is
+   undefined behaviour.
 
 To update, copy `stb_truetype.h` from a newer commit, update the commit
 above, rebuild both presets and check that `win95check` still passes.

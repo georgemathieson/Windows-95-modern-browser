@@ -1,4 +1,5 @@
-/* Content-Encoding decoding: gzip and deflate, using zlib.
+/* Content-Encoding decoding: gzip and deflate, using zlib, and Brotli
+ * (br, decision 42), which WOFF2 fonts use too.
  *
  * Handles the real-world quirks: "deflate" is meant to be zlib-wrapped but
  * some servers send raw deflate, and gzip bodies may hold several members.
@@ -12,6 +13,7 @@ typedef enum tc_content_coding {
     TC_CODING_IDENTITY,
     TC_CODING_GZIP,
     TC_CODING_DEFLATE,
+    TC_CODING_BR,
     TC_CODING_UNKNOWN
 } tc_content_coding;
 

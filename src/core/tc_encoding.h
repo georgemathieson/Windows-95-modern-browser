@@ -3,10 +3,7 @@
  *
  * Tachyon keeps text as UTF-8, so every page is decoded once, up front.
  * Decoding follows the standard's error handling exactly (each error becomes
- * U+FFFD), because differences there have caused XSS bugs in browsers.
- *
- * The Chinese, Japanese and Korean multi-byte encodings are recognised but
- * not decoded yet: tc_encoding_supported() is false for them. */
+ * U+FFFD), because differences there have caused XSS bugs in browsers. */
 #ifndef TC_ENCODING_H
 #define TC_ENCODING_H
 

@@ -114,6 +114,10 @@ static const kw kw_cursor[] = {
     { "-webkit-grabbing", TC_CURSOR_DEFAULT }, { "zoom-in", TC_CURSOR_DEFAULT }, { "zoom-out", TC_CURSOR_DEFAULT },
     { "-webkit-zoom-in", TC_CURSOR_DEFAULT }, { "-webkit-zoom-out", TC_CURSOR_DEFAULT }, { NULL, 0 }
 };
+static const kw kw_object_fit[] = {
+    { "fill", TC_FIT_FILL }, { "contain", TC_FIT_CONTAIN }, { "cover", TC_FIT_COVER }, { "none", TC_FIT_NONE },
+    { "scale-down", TC_FIT_SCALE_DOWN }, { NULL, 0 }
+};
 static const kw kw_display[] = {
     { "none", TC_DISPLAY_NONE }, { "contents", TC_DISPLAY_CONTENTS }, { "inline", TC_DISPLAY_INLINE },
     { "block", TC_DISPLAY_BLOCK }, { "inline-block", TC_DISPLAY_INLINE_BLOCK }, { "list-item", TC_DISPLAY_LIST_ITEM },
@@ -162,7 +166,8 @@ static int wide_keyword(const tc_css_value *v)
 enum {
     T_KEYWORD, T_DISPLAY, T_MARGIN, T_PADDING, T_INSET, T_BORDER_WIDTH, T_COLOR, T_SIZE, T_MAX_SIZE, T_VALIGN,
     T_DECORATION_LINE, T_CONTENT, T_Z_INDEX, T_FONT_FAMILY, T_FONT_SIZE, T_FONT_WEIGHT, T_FONT_STYLE,
-    T_LINE_HEIGHT, T_LIST_STYLE_TYPE, T_CURSOR, T_TEXT_INDENT, T_SPACING
+    T_LINE_HEIGHT, T_LIST_STYLE_TYPE, T_CURSOR, T_TEXT_INDENT, T_SPACING, T_BG_IMAGE, T_BG_REPEAT,
+    T_BG_POSITION, T_BG_SIZE, T_BG_BOX, T_POSITION, T_IMAGE
 };
 
 static const struct prop_info {
@@ -187,7 +192,10 @@ static const struct {
     { "-webkit-text-decoration", SH_TEXT_DECORATION }, { "-webkit-text-decoration-color", P_TEXT_DECORATION_COLOR },
     { "-webkit-text-decoration-line", P_TEXT_DECORATION_LINE },
     { "-webkit-text-decoration-style", P_TEXT_DECORATION_STYLE }, { "all", SH_ALL }, { "background", SH_BACKGROUND },
-    { "background-color", P_BACKGROUND_COLOR }, { "block-size", P_HEIGHT }, { "border", SH_BORDER },
+    { "background-clip", P_BACKGROUND_CLIP }, { "background-color", P_BACKGROUND_COLOR },
+    { "background-image", P_BACKGROUND_IMAGE }, { "background-origin", P_BACKGROUND_ORIGIN },
+    { "background-position", P_BACKGROUND_POSITION }, { "background-repeat", P_BACKGROUND_REPEAT },
+    { "background-size", P_BACKGROUND_SIZE }, { "block-size", P_HEIGHT }, { "border", SH_BORDER },
     { "border-block", SH_BORDER_BLOCK }, { "border-block-color", SH_BORDER_BLOCK_COLOR },
     { "border-block-end", SH_BORDER_BOTTOM }, { "border-block-end-color", P_BORDER_BOTTOM_COLOR },
     { "border-block-end-style", P_BORDER_BOTTOM_STYLE }, { "border-block-end-width", P_BORDER_BOTTOM_WIDTH },
@@ -217,7 +225,7 @@ static const struct {
     { "inset-block-end", P_BOTTOM }, { "inset-block-start", P_TOP }, { "inset-inline", SH_INSET_INLINE },
     { "inset-inline-end", P_RIGHT }, { "inset-inline-start", P_LEFT }, { "left", P_LEFT },
     { "letter-spacing", P_LETTER_SPACING }, { "line-height", P_LINE_HEIGHT }, { "list-style", SH_LIST_STYLE },
-    { "list-style-position", P_LIST_STYLE_POSITION }, { "list-style-type", P_LIST_STYLE_TYPE },
+    { "list-style-image", P_LIST_STYLE_IMAGE }, { "list-style-position", P_LIST_STYLE_POSITION }, { "list-style-type", P_LIST_STYLE_TYPE },
     { "margin", SH_MARGIN }, { "margin-block", SH_MARGIN_BLOCK }, { "margin-block-end", P_MARGIN_BOTTOM },
     { "margin-block-start", P_MARGIN_TOP }, { "margin-bottom", P_MARGIN_BOTTOM },
     { "margin-inline", SH_MARGIN_INLINE }, { "margin-inline-end", P_MARGIN_RIGHT },
@@ -225,7 +233,7 @@ static const struct {
     { "margin-top", P_MARGIN_TOP }, { "max-block-size", P_MAX_HEIGHT }, { "max-height", P_MAX_HEIGHT },
     { "max-inline-size", P_MAX_WIDTH }, { "max-width", P_MAX_WIDTH }, { "min-block-size", P_MIN_HEIGHT },
     { "min-height", P_MIN_HEIGHT }, { "min-inline-size", P_MIN_WIDTH }, { "min-width", P_MIN_WIDTH },
-    { "overflow", SH_OVERFLOW }, { "overflow-wrap", P_OVERFLOW_WRAP }, { "overflow-x", P_OVERFLOW_X },
+    { "object-fit", P_OBJECT_FIT }, { "object-position", P_OBJECT_POSITION }, { "overflow", SH_OVERFLOW }, { "overflow-wrap", P_OVERFLOW_WRAP }, { "overflow-x", P_OVERFLOW_X },
     { "overflow-y", P_OVERFLOW_Y }, { "padding", SH_PADDING }, { "padding-block", SH_PADDING_BLOCK },
     { "padding-block-end", P_PADDING_BOTTOM }, { "padding-block-start", P_PADDING_TOP },
     { "padding-bottom", P_PADDING_BOTTOM }, { "padding-inline", SH_PADDING_INLINE },
@@ -324,12 +332,16 @@ static uint32_t longhands(uint16_t prop, uint16_t *out)
     case SH_INSET_BLOCK: out[0] = P_TOP, out[1] = P_BOTTOM; return 2;
     case SH_INSET_INLINE: out[0] = P_LEFT, out[1] = P_RIGHT; return 2;
     case SH_OVERFLOW: out[0] = P_OVERFLOW_X, out[1] = P_OVERFLOW_Y; return 2;
-    case SH_BACKGROUND: out[0] = P_BACKGROUND_COLOR; return 1;
+    case SH_BACKGROUND:
+        out[0] = P_BACKGROUND_COLOR, out[1] = P_BACKGROUND_IMAGE, out[2] = P_BACKGROUND_REPEAT;
+        out[3] = P_BACKGROUND_POSITION, out[4] = P_BACKGROUND_SIZE, out[5] = P_BACKGROUND_ORIGIN;
+        out[6] = P_BACKGROUND_CLIP;
+        return 7;
     case SH_FONT:
         out[0] = P_FONT_STYLE, out[1] = P_FONT_WEIGHT, out[2] = P_FONT_SIZE, out[3] = P_LINE_HEIGHT;
         out[4] = P_FONT_FAMILY;
         return 5;
-    case SH_LIST_STYLE: out[0] = P_LIST_STYLE_TYPE, out[1] = P_LIST_STYLE_POSITION; return 2;
+    case SH_LIST_STYLE: out[0] = P_LIST_STYLE_TYPE, out[1] = P_LIST_STYLE_POSITION, out[2] = P_LIST_STYLE_IMAGE; return 3;
     case SH_TEXT_DECORATION:
         out[0] = P_TEXT_DECORATION_LINE, out[1] = P_TEXT_DECORATION_STYLE, out[2] = P_TEXT_DECORATION_COLOR;
         return 3;
@@ -356,6 +368,7 @@ static uint32_t longhands(uint16_t prop, uint16_t *out)
 typedef struct pctx {
     tc_arena *a;
     int quirks;
+    const char *base;  /* url()s are relative to this style sheet's URL (NULL: the document's) */
 } pctx;
 
 #define MAX_WORDS 256
@@ -763,6 +776,444 @@ static int parse_decoration_line(const tc_css_value *const *w, uint32_t n, int32
     return 1;
 }
 
+/* ---- Images, positions and backgrounds ---- */
+
+#define MAX_LAYERS 64 /* background layers, gradient stops */
+
+/* url(x) or url("x"): the URL as written, or NULL. */
+static const char *url_of(const tc_css_value *v)
+{
+    uint32_t i;
+    if (v->type == TC_CSS_URL)
+        return v->text;
+    if (v->type != TC_CSS_FUNCTION || !tc_css_ascii_ieq(v->text, "url"))
+        return NULL;
+    for (i = 0; i < v->nitems; i++)
+        if (v->items[i].type == TC_CSS_STRING)
+            return v->items[i].text;
+        else if (v->items[i].type != TC_CSS_WHITESPACE)
+            return NULL;
+    return NULL;
+}
+
+/* An <angle> in degrees. */
+static int parse_angle(const tc_css_value *v, float *deg)
+{
+    static const struct {
+        const char *unit;
+        double scale;
+    } units[] = { { "deg", 1 }, { "grad", 0.9 }, { "rad", 57.29577951 }, { "turn", 360 } };
+    size_t i;
+    if (v->type == TC_CSS_NUMBER && v->number == 0) {
+        *deg = 0;
+        return 1;
+    }
+    if (v->type != TC_CSS_DIMENSION)
+        return 0;
+    for (i = 0; i < TC_ARRAY_LEN(units); i++)
+        if (tc_css_ascii_ieq(v->text, units[i].unit)) {
+            double d = v->number * units[i].scale;
+            if (!(d > -1e7 && d < 1e7))
+                return 0;
+            *deg = (float)d;
+            return 1;
+        }
+    return 0;
+}
+
+/* top, right, bottom or left as TC_CORNER_* bits; 0 if it's none. */
+static unsigned side_bit(const tc_css_value *v)
+{
+    if (tc_css_is_ident(v, "top"))
+        return TC_CORNER_TOP;
+    if (tc_css_is_ident(v, "right"))
+        return TC_CORNER_RIGHT;
+    if (tc_css_is_ident(v, "bottom"))
+        return TC_CORNER_BOTTOM;
+    if (tc_css_is_ident(v, "left"))
+        return TC_CORNER_LEFT;
+    return 0;
+}
+
+/* A function's arguments, split at commas, without whitespace. */
+static uint32_t split_args(const tc_css_value *f, const tc_css_value **w, uint32_t *start, uint32_t *len,
+                           uint32_t max_groups)
+{
+    uint32_t i, n = 0, groups = 0;
+    start[0] = 0;
+    len[0] = 0;
+    for (i = 0; i < f->nitems && n < MAX_WORDS; i++) {
+        const tc_css_value *v = &f->items[i];
+        if (v->type == TC_CSS_WHITESPACE)
+            continue;
+        if (v->type == TC_CSS_COMMA) {
+            if (++groups >= max_groups)
+                return 0;
+            start[groups] = n;
+            len[groups] = 0;
+            continue;
+        }
+        w[n++] = v;
+        len[groups]++;
+    }
+    return groups + 1;
+}
+
+/* linear-gradient() and repeating-linear-gradient(), and the old
+   -webkit- form, whose sides say where it starts rather than ends. */
+static int parse_gradient(pctx *c, const tc_css_value *f, tc_css_image *img)
+{
+    const tc_css_value *w[MAX_WORDS];
+    uint32_t start[MAX_LAYERS], len[MAX_LAYERS], groups, g, first = 0, nstops = 0;
+    const char *name = f->text;
+    int legacy = 0;
+    tc_color_stop *stops;
+
+    if (name[0] == '-') {
+        if (tc_css_ascii_ieq(name, "-webkit-linear-gradient") || tc_css_ascii_ieq(name, "-moz-linear-gradient") ||
+            tc_css_ascii_ieq(name, "-o-linear-gradient"))
+            legacy = 1;
+        else if (tc_css_ascii_ieq(name, "-webkit-repeating-linear-gradient") ||
+                 tc_css_ascii_ieq(name, "-moz-repeating-linear-gradient"))
+            legacy = 1, img->repeating = 1;
+        else
+            return 0;
+    } else if (tc_css_ascii_ieq(name, "repeating-linear-gradient")) {
+        img->repeating = 1;
+    } else if (!tc_css_ascii_ieq(name, "linear-gradient")) {
+        return 0;
+    }
+    img->type = TC_CSS_IMAGE_LINEAR;
+    img->angle = 180;
+    groups = split_args(f, w, start, len, MAX_LAYERS);
+    if (groups < 2)
+        return 0;
+    /* The direction, if there is one. */
+    if (len[0] && parse_angle(w[start[0]], &img->angle)) {
+        if (len[0] != 1)
+            return 0;
+        if (legacy)
+            img->angle = 90 - img->angle; /* counterclockwise from east */
+        first = 1;
+    } else if (len[0] && (tc_css_is_ident(w[start[0]], "to") || (legacy && side_bit(w[start[0]])))) {
+        unsigned bits = 0, k;
+        for (k = legacy ? 0 : 1; k < len[0]; k++) {
+            unsigned b = side_bit(w[start[0] + k]);
+            if (!b || (bits & b))
+                return 0;
+            bits |= b;
+        }
+        if (!bits || ((bits & TC_CORNER_TOP) && (bits & TC_CORNER_BOTTOM)) ||
+            ((bits & TC_CORNER_LEFT) && (bits & TC_CORNER_RIGHT)))
+            return 0;
+        if (legacy) /* where it starts: it goes the other way */
+            bits = ((bits & 3u) << 2) | ((bits >> 2) & 3u);
+        if (bits == TC_CORNER_TOP)
+            img->angle = 0;
+        else if (bits == TC_CORNER_RIGHT)
+            img->angle = 90;
+        else if (bits == TC_CORNER_BOTTOM)
+            img->angle = 180;
+        else if (bits == TC_CORNER_LEFT)
+            img->angle = 270;
+        else
+            img->corner = (uint8_t)bits;
+        first = 1;
+    }
+    stops = tc_arena_alloc(c->a, 2 * groups * sizeof *stops);
+    if (!stops)
+        return 0;
+    for (g = first; g < groups; g++) {
+        tc_pval v;
+        uint32_t k, at = start[g];
+        if (!len[g])
+            return 0;
+        if (len[g] == 1 && !parse_color(w[at], &v))
+            continue; /* a colour hint: Tachyon interpolates linearly */
+        if (!parse_color(w[at], &v) || len[g] > 3)
+            return 0;
+        for (k = 0; k < (len[g] > 1 ? len[g] - 1 : 1); k++) {
+            tc_color_stop *st = &stops[nstops++];
+            memset(st, 0, sizeof *st);
+            st->color = v.kind == PV_COLOR ? v.n.u : 0;
+            st->currentcolor = v.kind == PV_CURRENTCOLOR;
+            if (len[g] > 1) {
+                tc_pval pos;
+                if (!parse_lp(c, w[at + 1 + k], TC_ALLOW_LENGTH | TC_ALLOW_PERCENT, 0, 0, &pos))
+                    return 0;
+                st->declared = pos.ptr;
+                st->has_position = 1;
+            }
+        }
+    }
+    if (nstops < 2)
+        return 0;
+    img->stops = stops;
+    img->nstops = nstops;
+    return 1;
+}
+
+/* An <image>: url(), a gradient, or image-set() (its first image). */
+static const tc_css_image *parse_image(pctx *c, const tc_css_value *v)
+{
+    tc_css_image *img;
+    const char *url = url_of(v);
+    if (!url && v->type == TC_CSS_FUNCTION &&
+        (tc_css_ascii_ieq(v->text, "image-set") || tc_css_ascii_ieq(v->text, "-webkit-image-set"))) {
+        uint32_t i;
+        for (i = 0; i < v->nitems && !url; i++)
+            url = v->items[i].type == TC_CSS_STRING ? v->items[i].text : url_of(&v->items[i]);
+        if (!url)
+            return NULL;
+    }
+    if (!url && v->type != TC_CSS_FUNCTION)
+        return NULL;
+    img = tc_arena_alloc(c->a, sizeof *img);
+    if (!img)
+        return NULL;
+    memset(img, 0, sizeof *img);
+    if (url) {
+        img->type = TC_CSS_IMAGE_URL;
+        img->url = copy_str(c->a, url);
+        img->base = c->base;
+        return img->url ? img : NULL;
+    }
+    return parse_gradient(c, v, img) ? img : NULL;
+}
+
+/* The words of a comma-separated list, by layer. */
+static uint32_t split_layers(const tc_css_value *const *w, uint32_t n, uint32_t *start, uint32_t *len)
+{
+    uint32_t i, layers = 1;
+    start[0] = 0;
+    len[0] = 0;
+    for (i = 0; i < n; i++) {
+        if (w[i]->type == TC_CSS_COMMA) {
+            if (layers == MAX_LAYERS)
+                return 0;
+            start[layers] = i + 1;
+            len[layers++] = 0;
+        } else {
+            len[layers - 1]++;
+        }
+    }
+    for (i = 0; i < layers; i++)
+        if (!len[i])
+            return 0;
+    return layers;
+}
+
+/* A <bg-position> (1 to 4 words). */
+enum { POS_LP, POS_LEFT, POS_RIGHT, POS_TOP, POS_BOTTOM, POS_CENTER };
+
+static int pos_horizontal(int k)
+{
+    return k == POS_LEFT || k == POS_RIGHT;
+}
+
+static int pos_vertical(int k)
+{
+    return k == POS_TOP || k == POS_BOTTOM;
+}
+
+/* One axis of a position from a keyword (with an optional offset) or a
+   length-percentage. */
+static void pos_axis(pctx *c, int k, const tc_calc *off, uint8_t *far, const tc_calc **at)
+{
+    static tc_css_value half = { TC_CSS_PERCENTAGE, 0, 0, "", "50", 50, NULL, 0 };
+    *far = k == POS_RIGHT || k == POS_BOTTOM;
+    *at = k == POS_CENTER ? tc_css_parse_calc(c->a, &half, TC_ALLOW_PERCENT) : off;
+}
+
+static int parse_position(pctx *c, const tc_css_value *const *w, uint32_t n, tc_position *out)
+{
+    int kind[4], a, b;
+    const tc_calc *off[4];
+    uint32_t i;
+    memset(out, 0, sizeof *out);
+    if (!n || n > 4)
+        return 0;
+    for (i = 0; i < n; i++) {
+        tc_pval v;
+        off[i] = NULL;
+        kind[i] = tc_css_is_ident(w[i], "left")     ? POS_LEFT
+                  : tc_css_is_ident(w[i], "right")  ? POS_RIGHT
+                  : tc_css_is_ident(w[i], "top")    ? POS_TOP
+                  : tc_css_is_ident(w[i], "bottom") ? POS_BOTTOM
+                  : tc_css_is_ident(w[i], "center") ? POS_CENTER
+                                                    : POS_LP;
+        if (kind[i] == POS_LP) {
+            if (!parse_lp(c, w[i], TC_ALLOW_LENGTH | TC_ALLOW_PERCENT, 0, 0, &v))
+                return 0;
+            off[i] = v.ptr;
+        }
+    }
+    if (n == 1) {
+        if (pos_vertical(kind[0])) {
+            pos_axis(c, kind[0], NULL, &out->far_y, &out->y);
+            pos_axis(c, POS_CENTER, NULL, &out->far_x, &out->x);
+        } else {
+            pos_axis(c, kind[0], off[0], &out->far_x, &out->x);
+            pos_axis(c, POS_CENTER, NULL, &out->far_y, &out->y);
+        }
+        return 1;
+    }
+    if (n == 2) {
+        a = kind[0], b = kind[1];
+        if (pos_vertical(a) || (a == POS_CENTER && pos_horizontal(b))) {
+            /* Keywords, vertical first. */
+            if (b == POS_LP || pos_vertical(b))
+                return 0;
+            pos_axis(c, b, NULL, &out->far_x, &out->x);
+            pos_axis(c, a, NULL, &out->far_y, &out->y);
+        } else {
+            if (pos_horizontal(b))
+                return 0;
+            pos_axis(c, a, off[0], &out->far_x, &out->x);
+            pos_axis(c, b, off[1], &out->far_y, &out->y);
+        }
+        return 1;
+    }
+    /* Three or four words: two keywords, each but center with an optional
+       offset; center takes whichever axis the other doesn't. */
+    {
+        int k[2];
+        const tc_calc *o[2];
+        uint32_t pairs = 0;
+        for (i = 0; i < n;) {
+            if (kind[i] == POS_LP || pairs == 2)
+                return 0;
+            k[pairs] = kind[i];
+            o[pairs] = NULL;
+            if (i + 1 < n && kind[i + 1] == POS_LP) {
+                if (kind[i] == POS_CENTER)
+                    return 0;
+                o[pairs] = off[i + 1];
+                i++;
+            }
+            i++;
+            pairs++;
+        }
+        if (pairs != 2)
+            return 0;
+        if (pos_vertical(k[0]) || pos_horizontal(k[1]) || (k[0] == POS_CENTER && k[1] == POS_CENTER)) {
+            int tk = k[0];
+            const tc_calc *to = o[0];
+            k[0] = k[1], o[0] = o[1], k[1] = tk, o[1] = to;
+        }
+        if (pos_vertical(k[0]) || pos_horizontal(k[1]))
+            return 0;
+        pos_axis(c, k[0], o[0], &out->far_x, &out->x);
+        pos_axis(c, k[1], o[1], &out->far_y, &out->y);
+        return 1;
+    }
+}
+
+/* One layer's background-repeat (1 or 2 words). */
+static int parse_repeat(const tc_css_value *const *w, uint32_t n, uint8_t rep[2])
+{
+    static const kw words[] = { { "repeat", TC_BG_REPEAT }, { "no-repeat", TC_BG_NO_REPEAT },
+                                { "space", TC_BG_SPACE }, { "round", TC_BG_ROUND }, { NULL, 0 } };
+    if (n == 1 && tc_css_is_ident(w[0], "repeat-x")) {
+        rep[0] = TC_BG_REPEAT, rep[1] = TC_BG_NO_REPEAT;
+        return 1;
+    }
+    if (n == 1 && tc_css_is_ident(w[0], "repeat-y")) {
+        rep[0] = TC_BG_NO_REPEAT, rep[1] = TC_BG_REPEAT;
+        return 1;
+    }
+    if (n < 1 || n > 2 || !kw_find(words, w[0], &rep[0]))
+        return 0;
+    rep[1] = rep[0];
+    return n == 1 || kw_find(words, w[1], &rep[1]);
+}
+
+/* One layer's background-size (1 or 2 words). */
+static int parse_bg_size(pctx *c, const tc_css_value *const *w, uint32_t n, tc_bg_size_decl *out)
+{
+    uint32_t i;
+    memset(out, 0, sizeof *out);
+    if (n == 1 && (tc_css_is_ident(w[0], "cover") || tc_css_is_ident(w[0], "contain"))) {
+        out->kind = tc_css_is_ident(w[0], "cover") ? TC_BG_COVER : TC_BG_CONTAIN;
+        return 1;
+    }
+    if (n < 1 || n > 2)
+        return 0;
+    for (i = 0; i < n; i++) {
+        tc_pval v;
+        if (tc_css_is_ident(w[i], "auto"))
+            continue;
+        if (!parse_lp(c, w[i], TC_ALLOW_LENGTH | TC_ALLOW_PERCENT, 1, 0, &v))
+            return 0;
+        if (i == 0)
+            out->w = v.ptr;
+        else
+            out->h = v.ptr;
+    }
+    return 1;
+}
+
+static int parse_box(const tc_css_value *v, uint8_t *out)
+{
+    if (tc_css_is_ident(v, "border-box") || tc_css_is_ident(v, "text"))
+        *out = TC_BG_BORDER_BOX;
+    else if (tc_css_is_ident(v, "padding-box"))
+        *out = TC_BG_PADDING_BOX;
+    else if (tc_css_is_ident(v, "content-box"))
+        *out = TC_BG_CONTENT_BOX;
+    else
+        return 0;
+    return 1;
+}
+
+static tc_bg_list *new_bg_list(pctx *c, uint32_t layers, uint16_t prop)
+{
+    tc_bg_list *l = tc_arena_alloc(c->a, sizeof *l);
+    if (!l)
+        return NULL;
+    memset(l, 0, sizeof *l);
+    l->count = layers;
+    switch (prop) {
+    case P_BACKGROUND_IMAGE: l->images = tc_arena_alloc(c->a, layers * sizeof *l->images); return l->images ? l : NULL;
+    case P_BACKGROUND_REPEAT: l->repeat = tc_arena_alloc(c->a, layers * sizeof *l->repeat); return l->repeat ? l : NULL;
+    case P_BACKGROUND_POSITION:
+        l->positions = tc_arena_alloc(c->a, layers * sizeof *l->positions);
+        return l->positions ? l : NULL;
+    case P_BACKGROUND_SIZE: l->sizes = tc_arena_alloc(c->a, layers * sizeof *l->sizes); return l->sizes ? l : NULL;
+    default: l->boxes = tc_arena_alloc(c->a, layers * sizeof *l->boxes); return l->boxes ? l : NULL;
+    }
+}
+
+/* A background longhand: a value per layer. */
+static int parse_bg_longhand(pctx *c, uint16_t prop, const tc_css_value *const *w, uint32_t n, tc_pval *out)
+{
+    uint32_t start[MAX_LAYERS], len[MAX_LAYERS], layers = split_layers(w, n, start, len), i;
+    tc_bg_list *l;
+    if (!layers || !(l = new_bg_list(c, layers, prop)))
+        return 0;
+    for (i = 0; i < layers; i++) {
+        const tc_css_value *const *lw = w + start[i];
+        uint32_t ln = len[i];
+        int ok;
+        switch (prop) {
+        case P_BACKGROUND_IMAGE:
+            l->images[i] = NULL;
+            ok = ln == 1 && (tc_css_is_ident(lw[0], "none") || (l->images[i] = parse_image(c, lw[0])) != NULL);
+            break;
+        case P_BACKGROUND_REPEAT: ok = parse_repeat(lw, ln, l->repeat[i]); break;
+        case P_BACKGROUND_POSITION: ok = parse_position(c, lw, ln, &l->positions[i]); break;
+        case P_BACKGROUND_SIZE: ok = parse_bg_size(c, lw, ln, &l->sizes[i]); break;
+        default: ok = ln == 1 && parse_box(lw[0], &l->boxes[i]); break;
+        }
+        if (!ok)
+            return 0;
+    }
+    memset(out, 0, sizeof *out);
+    out->kind = PV_PTR;
+    out->ptr = l;
+    return 1;
+}
+
 /* One longhand's value from its words. */
 static int parse_longhand(pctx *c, uint16_t prop, const tc_css_value *const *w, uint32_t n, tc_pval *out)
 {
@@ -819,6 +1270,30 @@ static int parse_longhand(pctx *c, uint16_t prop, const tc_css_value *const *w, 
         return parse_decoration_line(w, n, &out->n.i);
     case T_CONTENT:
         return parse_content(c, w, n, out);
+    case T_BG_IMAGE:
+    case T_BG_REPEAT:
+    case T_BG_POSITION:
+    case T_BG_SIZE:
+    case T_BG_BOX:
+        return parse_bg_longhand(c, prop, w, n, out);
+    case T_POSITION: {
+        tc_position *pos = tc_arena_alloc(c->a, sizeof *pos);
+        if (!pos || !parse_position(c, w, n, pos))
+            return 0;
+        out->kind = PV_PTR;
+        out->ptr = pos;
+        return 1;
+    }
+    case T_IMAGE:
+        if (n != 1)
+            return 0;
+        if (tc_css_is_ident(w[0], "none")) {
+            set_keyword(out, 0);
+            return 1;
+        }
+        out->kind = PV_PTR;
+        out->ptr = parse_image(c, w[0]);
+        return out->ptr != NULL;
     case T_Z_INDEX:
         if (n != 1)
             return 0;
@@ -985,55 +1460,102 @@ static int sh_border(pctx *c, unsigned sides, const tc_css_value *const *w, uint
 }
 
 /* background: Tachyon keeps only the colour, but checks the rest. */
-static int sh_background(const tc_css_value *const *w, uint32_t n, outv *o)
+static int is_position_word(const tc_css_value *v)
 {
-    static const char *const idents[] = {
-        "none", "repeat", "repeat-x", "repeat-y", "no-repeat", "space", "round", "scroll", "fixed", "local",
-        "border-box", "padding-box", "content-box", "text", "left", "right", "top", "bottom", "center", "auto",
-        "cover", "contain"
-    };
+    return tc_css_is_ident(v, "left") || tc_css_is_ident(v, "right") || tc_css_is_ident(v, "top") ||
+           tc_css_is_ident(v, "bottom") || tc_css_is_ident(v, "center") || v->type == TC_CSS_NUMBER ||
+           v->type == TC_CSS_PERCENTAGE || v->type == TC_CSS_DIMENSION ||
+           (v->type == TC_CSS_FUNCTION && (tc_css_ascii_ieq(v->text, "calc") || tc_css_ascii_ieq(v->text, "min") ||
+                                           tc_css_ascii_ieq(v->text, "max") || tc_css_ascii_ieq(v->text, "clamp")));
+}
+
+static int is_repeat_word(const tc_css_value *v)
+{
+    return tc_css_is_ident(v, "repeat") || tc_css_is_ident(v, "repeat-x") || tc_css_is_ident(v, "repeat-y") ||
+           tc_css_is_ident(v, "no-repeat") || tc_css_is_ident(v, "space") || tc_css_is_ident(v, "round");
+}
+
+/* background: layers of [image || position [/ size] || repeat || attachment
+   || box{1,2}], the last with a colour too. */
+static int sh_background(pctx *c, const tc_css_value *const *w, uint32_t n, outv *o)
+{
+    static const uint16_t lists[] = { P_BACKGROUND_IMAGE, P_BACKGROUND_REPEAT, P_BACKGROUND_POSITION,
+                                      P_BACKGROUND_SIZE, P_BACKGROUND_ORIGIN, P_BACKGROUND_CLIP };
+    uint32_t start[MAX_LAYERS], len[MAX_LAYERS], layers = split_layers(w, n, start, len), i, k;
+    tc_bg_list *l[TC_ARRAY_LEN(lists)];
     tc_pval color, v;
-    int have_color = 0;
-    uint32_t i;
-    size_t k;
-    if (!n)
+
+    if (!layers)
         return 0;
+    for (k = 0; k < TC_ARRAY_LEN(lists); k++)
+        if (!(l[k] = new_bg_list(c, layers, lists[k])))
+            return 0;
     memset(&color, 0, sizeof color);
     color.kind = PV_COLOR; /* transparent */
-    for (i = 0; i < n; i++) {
-        const tc_css_value *t = w[i];
-        if (t->type == TC_CSS_COMMA) {
-            if (have_color || i + 1 == n)
-                return 0; /* only the last layer has a colour */
-            continue;
-        }
-        if (parse_color(t, &v)) {
-            if (have_color)
+    for (i = 0; i < layers; i++) {
+        const tc_css_value *const *lw = w + start[i];
+        uint32_t ln = len[i], j = 0, nboxes = 0;
+        int have_image = 0, have_pos = 0, have_repeat = 0, have_attach = 0, have_color = 0;
+        tc_css_image const **image = &l[0]->images[i];
+        *image = NULL;
+        l[1]->repeat[i][0] = l[1]->repeat[i][1] = TC_BG_REPEAT;
+        memset(&l[2]->positions[i], 0, sizeof l[2]->positions[i]);
+        memset(&l[3]->sizes[i], 0, sizeof l[3]->sizes[i]);
+        l[4]->boxes[i] = TC_BG_PADDING_BOX;
+        l[5]->boxes[i] = TC_BG_BORDER_BOX;
+        while (j < ln) {
+            const tc_css_value *t = lw[j];
+            if (!have_image && tc_css_is_ident(t, "none")) {
+                have_image = 1, j++;
+            } else if (!have_image && (*image = parse_image(c, t)) != NULL) {
+                have_image = 1, j++;
+            } else if (!have_pos && is_position_word(t)) {
+                uint32_t m = j;
+                while (m < ln && m - j < 4 && is_position_word(lw[m]))
+                    m++;
+                if (!parse_position(c, lw + j, m - j, &l[2]->positions[i]))
+                    return 0;
+                have_pos = 1, j = m;
+                if (j < ln && tc_css_is_delim(lw[j], '/')) {
+                    m = ++j;
+                    while (m < ln && m - j < 2 &&
+                           (tc_css_is_ident(lw[m], "auto") || tc_css_is_ident(lw[m], "cover") ||
+                            tc_css_is_ident(lw[m], "contain") || is_position_word(lw[m])))
+                        m++;
+                    if (!parse_bg_size(c, lw + j, m - j, &l[3]->sizes[i]))
+                        return 0;
+                    j = m;
+                }
+            } else if (!have_repeat && is_repeat_word(t)) {
+                uint32_t m = j + 1;
+                if (m < ln && is_repeat_word(lw[m]) && !tc_css_is_ident(t, "repeat-x") &&
+                    !tc_css_is_ident(t, "repeat-y"))
+                    m++;
+                if (!parse_repeat(lw + j, m - j, l[1]->repeat[i]))
+                    return 0;
+                have_repeat = 1, j = m;
+            } else if (!have_attach && (tc_css_is_ident(t, "scroll") || tc_css_is_ident(t, "fixed") ||
+                                        tc_css_is_ident(t, "local"))) {
+                have_attach = 1, j++; /* Tachyon scrolls every background */
+            } else if (nboxes < 2 && parse_box(t, &l[5]->boxes[i])) {
+                if (!nboxes)
+                    l[4]->boxes[i] = l[5]->boxes[i];
+                nboxes++, j++;
+            } else if (i + 1 == layers && !have_color && parse_color(t, &v)) {
+                color = v;
+                have_color = 1, j++;
+            } else {
                 return 0;
-            color = v;
-            have_color = 1;
-            continue;
-        }
-        switch (t->type) {
-        case TC_CSS_IDENT:
-            for (k = 0; k < TC_ARRAY_LEN(idents); k++)
-                if (tc_css_ascii_ieq(t->text, idents[k]))
-                    break;
-            if (k == TC_ARRAY_LEN(idents))
-                return 0;
-            break;
-        case TC_CSS_URL:
-        case TC_CSS_FUNCTION: /* images, calc() positions */
-        case TC_CSS_NUMBER:
-        case TC_CSS_PERCENTAGE:
-        case TC_CSS_DIMENSION:
-            break;
-        default:
-            if (!tc_css_is_delim(t, '/'))
-                return 0;
+            }
         }
     }
     emit(o, P_BACKGROUND_COLOR, &color);
+    for (k = 0; k < TC_ARRAY_LEN(lists); k++) {
+        memset(&v, 0, sizeof v);
+        v.kind = PV_PTR;
+        v.ptr = l[k];
+        emit(o, lists[k], &v);
+    }
     return 1;
 }
 
@@ -1116,21 +1638,26 @@ done:
 
 static int sh_list_style(pctx *c, const tc_css_value *const *w, uint32_t n, outv *o)
 {
-    tc_pval type, position;
+    tc_pval type, position, image;
     int nones = 0, have_type = 0, have_position = 0, have_image = 0;
     uint32_t i;
     if (n < 1 || n > 3)
         return 0;
     set_keyword(&type, TC_LIST_DISC);
     set_keyword(&position, TC_LIST_OUTSIDE);
+    set_keyword(&image, 0);
     for (i = 0; i < n; i++) {
         if (tc_css_is_ident(w[i], "none"))
             nones++;
         else if (!have_position && kw_find(kw_list_position, w[i], &position.keyword))
             have_position = 1;
         else if (!have_image && (w[i]->type == TC_CSS_URL || w[i]->type == TC_CSS_FUNCTION) &&
-                 !tc_css_ascii_ieq(w[i]->text, "symbols"))
+                 !tc_css_ascii_ieq(w[i]->text, "symbols")) {
             have_image = 1;
+            image.kind = PV_PTR;
+            if (!(image.ptr = parse_image(c, w[i])))
+                return 0;
+        }
         else if (!have_type && parse_longhand(c, P_LIST_STYLE_TYPE, &w[i], 1, &type))
             have_type = 1;
         else
@@ -1147,6 +1674,7 @@ static int sh_list_style(pctx *c, const tc_css_value *const *w, uint32_t n, outv
         return 0;
     emit(o, P_LIST_STYLE_TYPE, &type);
     emit(o, P_LIST_STYLE_POSITION, &position);
+    emit(o, P_LIST_STYLE_IMAGE, &image);
     return 1;
 }
 
@@ -1271,7 +1799,7 @@ static int parse_shorthand(pctx *c, uint16_t prop, const tc_css_value *const *w,
     case SH_INSET_BLOCK: return sh_pair(c, P_TOP, P_BOTTOM, w, n, o);
     case SH_INSET_INLINE: return sh_pair(c, P_LEFT, P_RIGHT, w, n, o);
     case SH_OVERFLOW: return sh_pair(c, P_OVERFLOW_X, P_OVERFLOW_Y, w, n, o);
-    case SH_BACKGROUND: return sh_background(w, n, o);
+    case SH_BACKGROUND: return sh_background(c, w, n, o);
     case SH_FONT: return sh_font(c, w, n, o);
     case SH_LIST_STYLE: return sh_list_style(c, w, n, o);
     case SH_TEXT_DECORATION: return sh_text_decoration(c, w, n, o);
@@ -1281,8 +1809,8 @@ static int parse_shorthand(pctx *c, uint16_t prop, const tc_css_value *const *w,
     }
 }
 
-uint32_t tc_prop_parse(tc_arena *a, uint16_t prop, const tc_css_value *v, uint32_t n, int quirks, uint16_t *out_props,
-                       tc_pval *vals)
+uint32_t tc_prop_parse(tc_arena *a, uint16_t prop, const tc_css_value *v, uint32_t n, int quirks, const char *base,
+                       uint16_t *out_props, tc_pval *vals)
 {
     const tc_css_value *w[MAX_WORDS];
     pctx c;
@@ -1292,6 +1820,7 @@ uint32_t tc_prop_parse(tc_arena *a, uint16_t prop, const tc_css_value *v, uint32
 
     c.a = a;
     c.quirks = quirks;
+    c.base = base;
     if (!count)
         return 0;
     wide = wide_keyword(w[0]);
@@ -1391,7 +1920,7 @@ void tc_decls_free(tc_decl_vec *v)
     memset(v, 0, sizeof *v);
 }
 
-int tc_decls_add(tc_arena *a, const tc_css_decl *d, int quirks, tc_decl_vec *out)
+int tc_decls_add(tc_arena *a, const tc_css_decl *d, int quirks, const char *base, tc_decl_vec *out)
 {
     uint16_t lh[P_COUNT];
     tc_pval vals[P_COUNT];
@@ -1421,6 +1950,7 @@ int tc_decls_add(tc_arena *a, const tc_css_decl *d, int quirks, tc_decl_vec *out
             return TC_ERR_NOMEM;
         var->tokens.n = d->nvalue;
         var->prop = (uint16_t)prop;
+        var->base = base;
         decl.value.kind = PV_VAR;
         decl.value.ptr = var;
         n = longhands((uint16_t)prop, lh);
@@ -1431,7 +1961,7 @@ int tc_decls_add(tc_arena *a, const tc_css_decl *d, int quirks, tc_decl_vec *out
         }
         return TC_OK;
     }
-    n = tc_prop_parse(a, (uint16_t)prop, d->value, d->nvalue, quirks, lh, vals);
+    n = tc_prop_parse(a, (uint16_t)prop, d->value, d->nvalue, quirks, base, lh, vals);
     for (i = 0; i < n; i++) {
         decl.prop = lh[i];
         decl.value = vals[i];
@@ -1453,7 +1983,7 @@ int tc_prop_supported(tc_arena *a, const char *name, const tc_css_value *v, uint
         return 0;
     if (tc_tokens_have_var(v, n))
         return 1;
-    return tc_prop_parse(a, (uint16_t)prop, v, n, 0, lh, vals) > 0;
+    return tc_prop_parse(a, (uint16_t)prop, v, n, 0, NULL, lh, vals) > 0;
 }
 
 int tc_prop_names_sorted(void)

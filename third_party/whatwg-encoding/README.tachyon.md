@@ -8,10 +8,13 @@
 
 - `encodings.json`: every encoding name and label.
 - `index-*.txt`: the indexes of the legacy single-byte encodings (128 code
-  points each).
+  points each), and of the Chinese, Japanese and Korean ones: jis0208,
+  jis0212, gb18030, gb18030-ranges, big5 and euc-kr (added in Sprint 4,
+  from the same commit).
 
-The multi-byte Chinese, Japanese and Korean indexes are left out until
-Tachyon can draw those scripts (see the backlog). Unmodified. At build time
-`tools/gen_encodings.py` compiles them into `tc_encoding_data.c`.
+Left out: `index-iso-2022-jp-katakana.txt`, which only encoders use.
+Unmodified. At build time `tools/gen_encodings.py` compiles the indexes
+into `tc_encoding_data.c` (about 180 KB of tables), and
+`tools/gen_encoding_tests.py` samples them for the unit tests.
 
 To update, copy the same files from a newer commit and rebuild.

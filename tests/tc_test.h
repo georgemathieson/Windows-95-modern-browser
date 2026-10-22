@@ -19,6 +19,17 @@ void tc_test_run(const char *name, void (*fn)(void));
 
 #define TC_RUN(fn) tc_test_run(#fn, fn)
 
+/* Test files compiled in by tools/gen_blobs.py (tests/data/images...). */
+typedef struct tc_test_blob {
+    const char *name;
+    const unsigned char *data;
+    size_t len;
+} tc_test_blob;
+extern const tc_test_blob tc_test_blobs[];
+extern const size_t tc_test_blob_count;
+/* The file of that name; NULL (and a failed check) if there's none. */
+const tc_test_blob *tc_test_blob_get(const char *name);
+
 #define TC_CHECK(cond) \
     do { \
         tc_test_checks++; \

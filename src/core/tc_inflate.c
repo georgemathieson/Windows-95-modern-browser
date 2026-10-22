@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "zlib.h"
+#include <brotli/decode.h>
 
 tc_content_coding tc_content_coding_from_header(const char *value)
 {
@@ -24,6 +25,8 @@ tc_content_coding tc_content_coding_from_header(const char *value)
         return TC_CODING_GZIP;
     if (strcmp(token, "deflate") == 0)
         return TC_CODING_DEFLATE;
+    if (strcmp(token, "br") == 0)
+        return TC_CODING_BR;
     return TC_CODING_UNKNOWN;
 }
 
@@ -31,6 +34,35 @@ tc_content_coding tc_content_coding_from_header(const char *value)
 static int looks_like_zlib(const unsigned char *p, size_t len)
 {
     return len >= 2 && (p[0] & 0x0F) == 8 && (p[0] >> 4) <= 7 && ((p[0] << 8) | p[1]) % 31 == 0;
+}
+
+static int decode_br(const unsigned char *p, size_t len, size_t max_out, tc_buf *out)
+{
+    BrotliDecoderState *st = BrotliDecoderCreateInstance(NULL, NULL, NULL);
+    BrotliDecoderResult r;
+    unsigned char chunk[16384];
+    const uint8_t *next_in = p;
+    size_t avail_in = len;
+    int err = TC_OK;
+
+    if (!st)
+        return TC_ERR_NOMEM;
+    do {
+        uint8_t *next_out = chunk;
+        size_t avail_out = sizeof chunk, n;
+        r = BrotliDecoderDecompressStream(st, &avail_in, &next_in, &avail_out, &next_out, NULL);
+        n = sizeof chunk - avail_out;
+        if (out->len + n > max_out)
+            err = TC_ERR_TOO_LARGE;
+        else if (n)
+            err = tc_buf_append(out, chunk, n);
+        if (!err && r == BROTLI_DECODER_RESULT_ERROR)
+            err = TC_ERR_DECODE;
+        if (r == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT)
+            break; /* truncated: what there is, as for gzip */
+    } while (!err && r != BROTLI_DECODER_RESULT_SUCCESS);
+    BrotliDecoderDestroyInstance(st);
+    return err;
 }
 
 int tc_inflate(tc_content_coding coding, const void *in, size_t len, size_t max_out, tc_buf *out)
@@ -42,6 +74,8 @@ int tc_inflate(tc_content_coding coding, const void *in, size_t len, size_t max_
 
     if (coding == TC_CODING_IDENTITY)
         return len > max_out ? TC_ERR_TOO_LARGE : tc_buf_append(out, in, len);
+    if (coding == TC_CODING_BR)
+        return decode_br(p, len, max_out, out);
     if (coding != TC_CODING_GZIP && coding != TC_CODING_DEFLATE)
         return TC_ERR_DECODE;
 

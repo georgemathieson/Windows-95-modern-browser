@@ -302,7 +302,7 @@ static int setup_replaced(tc_layout *l, tc_box *b, const tc_element *el)
 {
     const char *type;
     if (el->node.ns == TC_NS_SVG && el->node.tag == TC_TAG_SVG) {
-        b->replaced = TC_REPLACED_MEDIA;
+        b->replaced = TC_REPLACED_IMAGE; /* drawn like a picture (tc_page makes it one) */
         return 1;
     }
     if (el->node.ns != TC_NS_HTML)

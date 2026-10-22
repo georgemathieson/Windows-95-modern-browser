@@ -21,8 +21,9 @@ typedef struct rendered {
 int render_file(const char *path, tc_font_set *fonts, int w, int h, int full, int dump, rendered *out);
 void rendered_free(rendered *r);
 
-/* The test fonts: the Liberation fonts (natively, or through Wine's Z:
-   drive), else the system's. */
-tc_font_set *render_fonts(const char *dir);
+/* The fonts in dirs, in that order (characters missing from the first come
+   from the later ones); with none, the test fonts: the Liberation fonts
+   (natively, or through Wine's Z: drive), else the system's. */
+tc_font_set *render_fonts(const char *const *dirs, size_t ndirs);
 
 #endif

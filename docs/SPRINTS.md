@@ -30,38 +30,33 @@ does not remember anything between sessions; this board does.
 | Display | 800×600, 16-bit colour | 640×480, 256 colours |
 | Network | TCP/IP over a network card or Dial-Up Networking, IPv4 | same |
 
-## Current sprint: Sprint 3, First Light
+## Current sprint: Sprint 4, Images and fonts
 
-**Goal:** real pages rendered with CSS, layout and text.
+**Goal:** pictures, and text in every script.
 
-**Demo:** read a Wikipedia article on Windows 95.
+**Demo:** on Windows 95, read Wikipedia's Windows 95 article with its pictures, and the same article on the Japanese Wikipedia, in Japanese.
 
 **Definition of done**
 
-- [x] CSS syntax: the tokenizer and parser of today's CSS Syntax Level 3, with `@charset` and BOM handling: **css-parsing-tests** (component values, declarations, rules, stylesheets, An+B, stylesheet bytes) pass, apart from a listed few where the 2021 tests and today's spec differ (decision 28)
-- [x] Colours: named colours, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`: css-parsing-tests' colour files pass
-- [x] Selectors Level 3 plus `:is()`, `:where()` and `:not()` with lists; specificity; matching fast enough for Wikipedia (rules bucketed by id, class and tag)
-- [x] The cascade: the HTML Standard's user-agent stylesheet, `<style>`, `<link rel=stylesheet>`, `@import`, `style` attributes, `!important`, inheritance, `initial`/`inherit`/`unset`, custom properties and `var()`, and media queries for screen width (full media queries stay in Sprint 7)
-- [x] Computed values for what block and inline layout need: display, box model (margin, border, padding, width, height, min/max, box-sizing), lengths (px, em, rem, ex, ch, %, vw/vh, pt and friends) with `calc()`, colour and background colour, fonts, text (align, indent, decoration, transform, white-space, spacing), vertical-align, visibility, list styles, `::before`/`::after` with string content
-- [x] Text: Windows 95's own TrueType fonts (Arial, Times New Roman, Courier New and the rest installed) rasterised by stb_truetype into `tc_surface`, with font matching, bold and italic, and a glyph cache (decision 27). GDI text retires from the page view
-- [x] Layout: the box tree (anonymous boxes, list markers, generated content, `<br>`, `<img>` as a placeholder with its alt text); block layout with auto widths, auto margins and margin collapsing; inline layout with line breaking, white-space handling, text-align and vertical-align; inline-block. Tables, floats and positioning are laid out as blocks until Sprint 7 (decision 29)
-- [x] Painting: backgrounds, borders (solid, dashed, dotted, double and Windows 95's own inset, outset, groove and ridge), text and its decorations, list markers; only the visible part is painted
-- [x] The browser shows rendered pages by default (View > Page), with the document tree and source one menu away; scrolling by scroll bar, wheel and keyboard; links show a hand and their address in the status bar, and clicking one follows it (`#fragment` links scroll); window resizing lays the page out again; `about:` pages are HTML
-- [x] Loading: stylesheets fetched after the page, over kept-alive connections reused per host, with a small in-memory cache (decision 30)
-- [x] Reference tests: `tachyon-render` lays out and paints a page to PNG on the host; reftests compare a test page with its reference pixel for pixel under ctest, natively and under Wine
-- [x] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
-- [ ] **George reads a Wikipedia article in Tachyon on Windows 95** (the demo)
-- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. PR #4 is merged, but `main` has moved on to 0.3.0 with PR #5, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
+- [x] Image decoding through Wuffs (decision 35): PNG with transparency, JPEG (baseline and progressive), GIF with animation, BMP, WebP (lossy and lossless, with alpha) and ICO, recognised by their bytes as the MIME Sniffing Standard says; memory bounded; unit tests and fuzzing
+- [x] `<img>` with `src`, `srcset` and `sizes`, `width` and `height`, and its alt text while loading or when it fails; `<picture>` choosing a source by type; replaced elements sized from their natural size and aspect ratio; `object-fit` and `object-position`
+- [x] CSS images: `background-image` with `url()` and `linear-gradient()`, `background-repeat`, `background-position`, `background-size`, `background-origin` and `background-clip`, several layers; `list-style-image`
+- [x] Loading: the page appears before its images; images load over the kept-alive connections, the ones in view first, and appear as they arrive (the page only moves when an image's size wasn't given); decoded images stay within a memory budget
+- [x] Animated GIFs play in the view
+- [x] 256-colour displays: pages are dithered to a palette instead of GDI's nearest colours (decision 39; Wine can't act as a 256-colour display, so George checks it)
+- [x] Basic SVG: shapes and paths with fills and strokes, transforms and `viewBox`, in `<img>`, CSS backgrounds and inline `<svg>`
+- [x] Font fallback: each character missing from the chosen font comes from a font that has it, Windows' installed fonts first, then Tachyon's optional font pack (decision 36); TrueType collections (`.ttc`); lines break between Chinese and Japanese characters. Scripts that need shaping or right-to-left layout wait (decision 37)
+- [x] `@font-face`: TrueType and OpenType, WOFF and WOFF2 (Brotli), with `unicode-range`, weights and styles; every downloaded font checked before stb_truetype reads it (decision 38); text laid out again when its fonts arrive. Brotli also for `Content-Encoding: br`
+- [x] Encodings: Shift_JIS, EUC-JP, ISO-2022-JP, GBK, gb18030, Big5 and EUC-KR from the WHATWG indexes, with tests (revisits decision 18)
+- [x] Reference tests for images, backgrounds and fallback; the decoders, SVG and fonts survive fuzzing; CI renders the real sites with their images, the Japanese Wikipedia included
+- [ ] **George reads both Wikipedia articles on Windows 95** (the demo)
+- [ ] Carried over from Sprint 3: George reads a Wikipedia article in Tachyon on Windows 95 (Sprint 3's demo, with this sprint's build or PR #6's)
+- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. `main` has moved on, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
 
 ## Upcoming sprints
 
 The goals are firm; the scope lists are drafts and get refined at the start
 of each sprint.
-
-### Sprint 4: Images and fonts
-
-**Goal:** pictures, and text in every script.
-PNG, JPEG, GIF (animated), WebP, ICO and basic SVG; `<img>` and background images; Unicode font fallback; `@font-face` with WOFF/WOFF2 (needs Brotli); dithering for 256-colour displays.
 
 ### Sprint 5: JavaScript
 
@@ -99,7 +94,6 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Verify the hand-curated export lists against real Windows 95 DLLs (`EXPORTS.EXE`).
 - TLS session resumption, to make repeat visits to a site faster.
 - Certificate revocation (OCSP stapling or a CRLite-style list) and HSTS.
-- **Chinese, Japanese and Korean encodings** (GBK, gb18030, Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR): about 200 KB of index tables, or less compressed. Best done with Sprint 4's font fallback, when those pages can be drawn.
 - Declarative shadow DOM (`<template shadowrootmode>`) and `<template for>` content patching, both new in the HTML Standard.
 - An XML parser for XHTML (`application/xhtml+xml` is parsed as HTML for now).
 - Parsing while downloading, which `document.write()` and progressive rendering both need.
@@ -111,8 +105,9 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Selecting and copying text on a page.
 - Reading Internet Explorer's proxy settings from the registry.
 - HTTP/2 (most sites still accept HTTP/1.1).
-- Brotli content encoding (needed for WOFF2 in Sprint 4 anyway).
-- 256-colour and 16-colour displays: our own ordered dithering.
+- 16-colour displays: dithering to the VGA palette (256 colours are Sprint 4's).
+- Web fonts: kerning from GPOS (hidden by the font checker, decision 38, so web fonts only kern with an old `kern` table); fonts with PostScript outlines (CFF, most `.otf` files); `local()` for fonts Windows has; fetching the fonts a page wants only after a resize (they wait for the next load).
+- **Right-to-left text and shaping** (decision 37): the Unicode bidirectional algorithm, Arabic and Hebrew layout, and shaping for Arabic and Indic scripts.
 - Shell: toolbar icons in the Windows 95 style, Large Fonts (120 DPI) layout, File > New Window.
 - Unicode in the window title and address bar (Windows 95's APIs are ANSI).
 - Out-of-memory handling and per-page memory limits.
@@ -160,6 +155,15 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 32 | One pipeline for a page (`tc_page`): the browser, `FETCH --render` and `tachyon-render` differ only in how they fetch style sheets. The browser's own pages (home, errors, `about:fonts`) are HTML drawn by the same engine | What CI and the reference tests check is then what George sees; the old GDI page drawing goes | Sprint 3 |
 | 33 | Windows 95's gaps in the page view are filled by hand: a hand cursor of our own (no `IDC_HAND`), polling every 100 ms while the mouse is over a link (no `TrackMouseEvent`), and scroll positions in units small enough for 16-bit scroll bars | Those APIs arrived with Windows 98 and NT 4; win95check refuses them | Sprint 3 |
 | 34 | Limits a hostile or broken page can't get past: boxes nest 200 deep, lengths stay within ±2<sup>25</sup> px (as in Chromium), font sizes within 10,000 px, documents stop at 10<sup>8</sup> px, glyphs bigger than 128×128 px aren't cached but rasterised only where they show, and a page loads at most 64 style sheets with imports 4 deep | Windows 95's 1 MB stack and small memory, C's rules (an infinite float converted to an int is undefined), and time: the render fuzzer found each of these | Sprint 3 |
+| 35 | Images are decoded by Wuffs (v0.4, pinned to a commit), not libpng, libjpeg, giflib and libwebp, nor stb_image | Wuffs is memory-safe by construction (its compiler proves the bounds checks), is one C file, and covers PNG, JPEG, GIF, BMP and lossy and lossless WebP; its CPU-specific code compiles out, so no SSE. stb_image says it isn't for untrusted input, and the classic libraries are four projects with SIMD code and long CVE histories. v0.4 is an alpha, so its API may change between updates | Sprint 4 |
+| 36 | Fonts for other scripts: Windows' installed fonts first (including Microsoft's language packs), then an optional font pack, "Fonts for other languages", in the installer: DejaVu Sans (Greek, Cyrillic, more Latin, Hebrew, symbols) and WenQuanYi Micro Hei (Chinese, Japanese, Korean). About 2 MB more in the installer and 6 MB installed; the CD and zip carry it, the floppy can't | George's choice. Windows 95's own fonts cover Western European languages only, and a fallback font is what every other browser relies on. These two are free (Bitstream Vera and Apache 2.0 licences) and cover the most-used scripts in the least space; Noto CJK alone is 16 MB per weight | Sprint 4 |
+| 37 | Sprint 4 covers scripts written one character after another (Latin, Greek, Cyrillic, Chinese, Japanese, Korean, symbols), and the old Chinese, Japanese and Korean encodings, revisiting decision 18. Right-to-left layout (the bidirectional algorithm) and shaping (Arabic, Indic scripts) wait for a later sprint | George's choice. Shaping and bidi are each a project; the encodings are tables, and pages in them are still around | Sprint 4 |
+| 38 | Fonts from the web are checked by Tachyon's own code before stb_truetype reads them: every table stb_truetype uses is bounds-checked, composite glyphs are depth-limited, and a font that fails is dropped | stb_truetype trusts its input and says so; web fonts are attacker-controlled. Browsers use OTS (C++) for the same job | Sprint 4 |
+| 39 | On a 256-colour display, the page is dithered to a palette of our own: a 6×6×6 colour cube and 20 greys between its six (236 colours, leaving Windows its 20). An 8×8 ordered (Bayer) dither, anchored to the page so that scrolling doesn't move the pattern; colours whose channels are within 16 of each other are dithered along the greys | Left to itself, Windows rounds each pixel of a true-colour picture to the nearest of the colours it has, which bands photographs and gradients. An ordered dither works on any rectangle by itself, so only what's painted is converted, and moved pixels still match. The greys keep text edges and the pale backgrounds most sites use smooth; the cube's steps (51) are too coarse for a grey's faint tint anyway. `--dither` shows the result on any display | Sprint 4 |
+| 40 | The font pack ships beside SETUP.EXE, not inside it: `FONTS` holds WenQuanYi Micro Hei and DejaVu Sans (from Ubuntu's packages at packaging time) on the CD and in the zip, and the installer's "Fonts for other languages" copies them when they're there. TACHYON.EXE adds `FONTS` beside itself after Windows' fonts, and a character a font lacks comes from the first face that has it | The installer stays small enough for the floppy, and the zip works without installing. Reading only each font's name and `cmap` tables (not the whole file) keeps start-up and the first fallback quick on a 1990s disk | Sprint 4 |
+| 41 | SVG is drawn by NanoSVG (zlib licence, pinned to a commit): SVG files in `<img>` and CSS backgrounds, and inline `<svg>` serialised from the DOM back to markup (`currentColor` resolved), each a picture on the page drawn at the size it's shown | One parser and rasteriser for all three, already handling paths, strokes with joins and caps, transforms, viewBox and gradients, in two small headers; writing our own stroker would take a sprint. It parses hostile files, so it runs under the image and render fuzzers, and its fixes are recorded in `third_party/nanosvg/README.tachyon.md`. Page CSS doesn't style inline SVG yet, and text in SVG isn't drawn | Sprint 4 |
+| 42 | Brotli (google/brotli v1.2.1, the decoder only) for WOFF2 fonts, and for `Content-Encoding: br`, which Tachyon now asks for | WOFF2 needs it anyway, and most sites send smaller pages with it than with gzip. It's the reference implementation, C, MIT, and portable without SIMD; its 120 KB dictionary is the cost | Sprint 4 |
+| 43 | `@font-face` fonts are fetched only when the page's text needs them: when the face's family comes before any installed family in some text's `font-family`, and that text has a character in the face's `unicode-range`. Until a font arrives its text is laid out with the next family, then again with it (`font-display: swap`, always). A page's web fonts are a font set of their own in front of the installed fonts; a character a font lacks comes from its family's other faces, then the other web families its `font-family` names, then the installed fonts, and the page's other web fonts last. `local()` is passed over, and fonts aren't checked against CORS | Sites declare many faces and use few (Google Fonts splits a family into dozens by `unicode-range`), and on a 1990s connection every needless download costs seconds. Swapping shows the page at once, as pictures are shown. Windows 95 won't have the fonts `local()` names. CORS on fonts protects the fonts' licences, not the reader | Sprint 4 |
 
 ## Risks
 
@@ -170,13 +174,28 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - **Hand-curated export lists.** kernel32 and crtdll come from Wine's 1998 reconstruction of Windows 95; the rest are from knowledge. Verify with real DLLs. The installer added OLE32 and eight functions (decision 25); George's `EXPORTS.TXT` will confirm them.
 - **Clocks.** Certificate checks need the right date, and VM clocks are often wrong. Tachyon warns, but can't fix it.
 - **Scope.** "Full HTML5" is unbounded; the conformance suites and the site list keep us honest.
-- **The floppy holds the installer, not the browser.** TACHYON.EXE grew to 1.4 MB stripped in Sprint 3 and no longer fits on a 1.44 MB floppy, so the floppy image now carries SETUP.EXE (798 KB compressed, with 576 KB to spare). Sprint 9's "install from a floppy" goal holds while the installer fits; after that it needs a second disk.
+- **The floppy holds the installer, not the browser.** TACHYON.EXE grew to 1.4 MB stripped in Sprint 3 and no longer fits on a 1.44 MB floppy, so the floppy image now carries SETUP.EXE (798 KB compressed, with 576 KB to spare). Sprint 4's decoders, encodings, Brotli and web fonts take SETUP.EXE to 1.27 MB, with 105 KB to spare: Sprint 5's JavaScript engine won't fit. Sprint 9's "install from a floppy" goal then needs a second disk, or the floppy drops EXPORTS.EXE and a compressor that beats NSIS's LZMA.
 - **Parsing speed on a Pentium.** GitHub's 572 KB home page parses in 7 ms on the build machine; a 1990s CPU may be a hundred times slower. George's "read in" timings will tell.
 - **Layout and painting speed on a Pentium.** A 12,000-word article lays out in 30 ms natively and paints a screen in about 4 ms; a hundred times slower would still be usable, but Wikipedia's real styles are heavier than our test page. Under Wine in CI, Wikipedia's article styles in 13 ms and lays out in 15 ms; George's "shown in" times are the real measure.
 
 ## Sprint history
 
-### Sprint 3: First Light (started 2026-10-21)
+### Sprint 4: Images and fonts (started 2026-10-22; opened as PR #7)
+
+- Started from `main` after PR #6 merged Sprint 3. Opened as PR #7 once everything but George's demo was done, with CI green: the build, the Wine tests, all four fuzz targets and the real sites.
+- George's choices: fonts for other scripts come from Windows first, then an optional font pack on the CD and in the zip (decision 36); this sprint covers scripts written one character after another, plus the old Chinese, Japanese and Korean encodings (decision 37).
+- **Pictures:** Wuffs (decision 35) decodes PNG, JPEG, GIF, BMP, WebP and ICO (`tc_image`), with unit tests and an image fuzzer. Pages show `<img>` (with `srcset`, `sizes` and `<picture>`), CSS background layers with `url()` and `linear-gradient()`, and `list-style-image`. The browser loads pictures on a second thread after showing the page, those in view first, then those below, and keeps decoded pixels within a memory budget (an eighth of the PC's memory, 8 to 64 MB), dropping the ones drawn longest ago. `FETCH --render` and `tachyon-render` load them too.
+- **Animation:** painting tells the page where each animated picture went, and a timer moves the ones on screen to their next frame and repaints only them. Pictures scrolled away, or in a minimised window, pause.
+- **Text in other scripts** (decisions 36 and 40): a character missing from a font comes from the first face in the set that has it, at the same size and style; faces' names and character coverage are read from just the tables that hold them, and collections (`.ttc`) work, including Japanese Windows' MS Gothic and MS Mincho. Lines break between Chinese and Japanese characters, but not before closing punctuation or after opening punctuation (a simplified UAX #14), and `word-break: keep-all` keeps them together. The render fuzzer found a hang there (a character wider than its line, with `overflow-wrap: anywhere`), now fixed.
+- **Chinese, Japanese and Korean encodings** (decision 37, revisiting 18): Shift_JIS, EUC-JP, ISO-2022-JP, GBK, gb18030, Big5 and EUC-KR decode as the Encoding Standard's algorithms say, from its indexes (vendored from the same commit as the rest of its data). Tests: each decoder's corner cases, and a seventh of every index turned into bytes and decoded through each encoding that uses it (10,500 pointers). The HTML fuzzer runs every input through all six decoders and checks the output is valid UTF-8. The tables add 180 KB to TACHYON.EXE; the floppy has 230 KB to spare.
+- **SVG** (decision 41): NanoSVG draws SVG files in `<img>` and backgrounds, sniffed by their `<svg>` element, and inline `<svg>` elements, which become pictures made from their markup. Each is drawn at the size it's shown (grown, never shrunk, so two sizes don't fight), within the pictures' memory budget. A NanoSVG bug made gradients with fractional coordinates (`x2="1"`) a single colour: fixed locally and recorded.
+- **Web fonts** (decisions 38, 42 and 43): `@font-face` with `src` (its `url()`s whose `format()` and `tech()` Tachyon reads, tried in order), `font-weight` (ranges too), `font-style` and `unicode-range`, inside `@media` and imported sheets. TrueType, WOFF (zlib) and WOFF2 (Brotli, with its `glyf`, `loca` and `hmtx` transforms undone by `tc_woff`) are checked by `tc_font_check` before stb_truetype sees them. Layout finds which faces the text needs; the browser fetches those before the pictures, unpacking them on the worker thread, and lays the page out again as each arrives. Fonts in `data:` URLs load straight away. Bold and italic are synthesised by what the file is, not what the rule says, so a variable font drawn as its default instance still looks bold. `Content-Encoding: br` came with Brotli. A font fuzzer runs the unpacking, the checker and stb_truetype; it found an empty WOFF2's null pointer, a stb_truetype read past a glyph's points (a last contour of one point off the curve, now refused), and a second GPOS table that hiding the first exposed. MinGW's constructor list held an address whose bytes read as an SSE instruction, so win95check now skips those pointer tables.
+- **Hardening and docs:** CI's fuzz job runs the picture and font targets as well as the parser and renderer. The README has a Sprint 4 screenshot (a demo article with an SVG logo, a web font headline, a JPEG and Japanese text), and the testing guide's section 4 is this sprint's demo.
+- **256 colours** (decision 39): `tc_dither` and an 8 bpp copy of the view's back buffer, with the palette realised as Windows expects (`WM_QUERYNEWPALETTE`, `WM_PALETTECHANGED`). `TACHYON.EXE --dither` and `tachyon-render --dither` show the result on any display. Wine 9 reports 16 bits per pixel even on an 8-bit X server, so the palette path awaits a real Windows 95 at 256 colours.
+
+### Sprint 3: First Light (2026-10-21 to 22; merged as PRs #5 and #6)
+
+- Done but the demo: George hadn't read a Wikipedia article on Windows 95 yet when Sprint 4 started, so it carries over.
 
 - Started on top of Sprint 2's branch, since PR #4 (installer and log) wasn't merged yet.
 - Scope refined: custom properties, `calc()` and width media queries come forward from Sprint 7 because Wikipedia's styles depend on them; tables, floats and positioning stay blocks (decision 29); fonts come from Windows 95 itself (decision 27).
