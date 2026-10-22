@@ -26,6 +26,7 @@ typedef struct tc_page {
     float width, height;        /* the viewport it's laid out for */
     unsigned style_ms, layout_ms;
     struct tc_page_images *images; /* its pictures: see tc_page_image_* */
+    struct tc_page_fonts *webfonts; /* its @font-face fonts: see tc_page_font_* */
 } tc_page;
 
 /* A tc_page_fetch_fn over HTTP: ctx is the tc_fetch_options to use (its
@@ -33,6 +34,7 @@ typedef struct tc_page {
    first asks for style sheets, the second for images. */
 int tc_page_fetch_http(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size);
 int tc_page_fetch_image_http(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size);
+int tc_page_fetch_font_http(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size);
 
 /* Start a page from a parsed document (taken over: html is left empty). */
 int tc_page_init(tc_page *p, const char *url, tc_html_page *html);
@@ -44,8 +46,10 @@ int tc_page_load_styles(tc_page *p, tc_page_fetch_fn fetch, void *ctx,
                         void (*progress)(void *ctx, unsigned n, const char *url));
 
 /* Compute styles for a viewport of w x h (media queries) and lay out. Run
-   again when the viewport changes size, or when an image it waited for
-   arrives. It finds the page's pictures too. */
+   again when the viewport changes size, when an image it waited for
+   arrives, or when a font arrives. It finds the page's pictures and web
+   fonts too; fonts is the set of installed fonts, which a page with
+   @font-face rules puts its own in front of. */
 int tc_page_layout(tc_page *p, tc_font_set *fonts, float w, float h);
 
 /* ---- Pictures ---- */
@@ -75,6 +79,30 @@ int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, 
    drawn dropped first (default 16 MB). An image bigger than a quarter of
    it isn't drawn. */
 void tc_page_set_image_memory(tc_page *p, size_t bytes);
+
+/* ---- Web fonts ---- */
+
+/* The fonts a page's @font-face rules offer, in the order its style sheets
+   give them. Laying out finds those its text needs: a face is wanted when
+   its family comes before any installed family in some text's
+   font-family, and that text has a character in its unicode-range. Those
+   wait to be fetched; the rest never are. Until a font arrives its text
+   is laid out with the next family (as font-display: swap does). data:
+   URLs are read as they're found. */
+enum { TC_PAGE_FONT_UNUSED, TC_PAGE_FONT_WAITING, TC_PAGE_FONT_LOADED, TC_PAGE_FONT_FAILED };
+size_t tc_page_font_count(const tc_page *p);
+/* The absolute URL being tried ("" while unused). */
+const char *tc_page_font_url(const tc_page *p, size_t i);
+int tc_page_font_state(const tc_page *p, size_t i);
+/* A waiting font's bytes arrived (TrueType, WOFF or WOFF2), or NULL if
+   they couldn't be fetched. A font that doesn't load goes on to its
+   rule's next src, waiting again, or fails. Returns 1 if the page must
+   be laid out again. */
+int tc_page_font_arrived(tc_page *p, size_t i, const void *data, size_t len);
+/* Fetch every waiting font, then lay out again. For the tools and tests;
+   the browser fetches them as tc_page_font_arrived describes. */
+int tc_page_load_fonts(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, void *ctx,
+                       void (*progress)(void *ctx, unsigned n, const char *url));
 
 /* Animated pictures. Painting notes which are on screen and where; this
    moves those whose time has come on to their next frame. now_ms: any

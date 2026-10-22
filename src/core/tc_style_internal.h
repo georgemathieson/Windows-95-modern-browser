@@ -211,7 +211,7 @@ tc_css_value *tc_tokens_copy(tc_arena *a, const tc_css_value *v, uint32_t n);
 
 /* ---- Style sheets ---- */
 
-enum { RULE_STYLE, RULE_LAYER, RULE_IMPORT };
+enum { RULE_STYLE, RULE_LAYER, RULE_IMPORT, RULE_FONT_FACE };
 
 /* The @media rules a rule is inside, innermost first. */
 typedef struct tc_cond tc_cond;
@@ -228,6 +228,7 @@ typedef struct tc_rule {
     tc_decl *decls;
     uint32_t ndecls;
     uint32_t import;            /* RULE_IMPORT: index into the sheet's imports */
+    const tc_font_face *face;   /* RULE_FONT_FACE */
 } tc_rule;
 
 typedef struct tc_import {

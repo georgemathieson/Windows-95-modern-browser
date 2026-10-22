@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Make the font tests' fonts in tests/data/fonts.
 
-Run once (needs fonttools: pip install fonttools); the fonts are checked
-in. Their glyphs are rectangles, so the tests can tell them apart by their
-pixels:
+Run once (needs fonttools and brotli: pip install fonttools brotli, and
+the fonts-liberation and fonts-dejavu-core packages); the fonts are checked
+in. The made-up ones' glyphs are rectangles, so the tests can tell them
+apart by their pixels:
 
     tachyon-test-cjk.ttf  "Tachyon Test CJK": a few Japanese and Chinese
                           characters and punctuation, each a different
@@ -11,6 +12,15 @@ pixels:
     tachyon-test.ttc      a collection of that font and "Tachyon Test
                           Symbols", which has a snowman (U+2603) and a
                           Greek alpha.
+    tachyon-test-cjk.woff, .woff2
+                          the first font as WOFF (zlib) and WOFF2
+                          (Brotli, its glyf and loca tables transformed).
+    liberation-subset.ttf, dejavu-subset.ttf
+                          a few dozen glyphs of real fonts, with composite
+                          glyphs (accented letters) and kerning, for the
+                          font checker and the font fuzzer.
+    liberation-subset.woff2
+                          the first as WOFF2 with hmtx transformed too.
 
 Usage: make_test_fonts.py OUT_DIR
 """
@@ -20,7 +30,8 @@ import sys
 
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from fontTools.ttLib import TTCollection
+from fontTools import subset
+from fontTools.ttLib import TTCollection, TTFont, woff2
 
 UPEM = 1000
 ASCENT = 880
@@ -87,6 +98,23 @@ def main():
     collection = TTCollection()
     collection.fonts = [build("Tachyon Test CJK", CJK), build("Tachyon Test Symbols", SYMBOLS)]
     collection.save(os.path.join(out, "tachyon-test.ttc"))
+    for flavor in ("woff", "woff2"):
+        font = build("Tachyon Test CJK", CJK)
+        font.flavor = flavor
+        font.save(os.path.join(out, "tachyon-test-cjk." + flavor))
+    for src, name, text in [("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                             "liberation-subset.ttf", "Tachyon AVTo WAVE kerning \u00e9\u00e0\u00fc\u00c5\u00f1"),
+                            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                             "dejavu-subset.ttf", "AV Wa To \u0393\u03b5\u03b9\u03b1 \u2603 \u00e9")]:
+        options = subset.Options()
+        options.layout_features = ["kern"]
+        sub = subset.Subsetter(options)
+        font = TTFont(src)
+        sub.populate(text=text)
+        sub.subset(font)
+        font.save(os.path.join(out, name))
+    woff2.compress(os.path.join(out, "liberation-subset.ttf"), os.path.join(out, "liberation-subset.woff2"),
+                   transform_tables={"glyf", "loca", "hmtx"})
 
 
 if __name__ == "__main__":

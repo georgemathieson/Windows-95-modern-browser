@@ -6,8 +6,10 @@
  * the rest is a page. Odd modes: the rest is a style sheet, applied to a
  * fixed page with a bit of everything. Text is set in the Liberation fonts
  * if they're installed (so glyph code runs too), else the box font, with
- * the test fonts for Chinese and Japanese characters they lack. The
- * painted pixels are animated and dithered as the browser would. */
+ * the test fonts for Chinese and Japanese characters they lack. Every web
+ * font a page asks for is the test font in WOFF2. The painted pixels are
+ * animated and dithered as the browser would. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,7 +19,10 @@
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static const char fixed_page[] =
-    "<!DOCTYPE html><html lang=en><head><title>t</title><style id=fuzz></style></head><body class=b>"
+    "<!DOCTYPE html><html lang=en><head><title>t</title>"
+    "<style>@font-face { font-family: W; src: url(w.woff2) format(woff2); unicode-range: U+4E00-9FFF, U+3040-309F }"
+    " @font-face { font-family: W; src: url(b.woff2); font-weight: 600 900 } [lang=ja] { font-family: W, serif }"
+    "</style><style id=fuzz></style></head><body class=b>"
     "<img class=anim src='data:image/gif;base64,"
     "R0lGODlhBAAEAPAAAP8AAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQECgAAACH/C0ltYWdlTWFnaWNrDmdhbW1hPTAuNDU0"
     "NTQ1ACwAAAAABAAEAAACBISPCQUAIfkEBBQAAAAh/wtJbWFnZU1hZ2ljaw5nYW1tYT0wLjQ1NDU0NQAsAAAAAAIAAgCAAP8A"
@@ -72,6 +77,28 @@ static int fuzz_sheet(void *ctx, const char *url, tc_buf *body, char *charset, s
     return TC_ERR_INVALID; /* no sheets from the network */
 }
 
+static int fuzz_font(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size)
+{
+    static tc_buf font;
+    static int read;
+    (void)ctx;
+    (void)url;
+    (void)charset_size;
+    charset[0] = '\0';
+    if (!read) {
+        FILE *f = fopen(TEST_FONTS_DIR "/tachyon-test-cjk.woff2", "rb");
+        char chunk[4096];
+        size_t n;
+        read = 1;
+        tc_buf_init(&font);
+        while (f && (n = fread(chunk, 1, sizeof chunk, f)) > 0)
+            tc_buf_append(&font, chunk, n);
+        if (f)
+            fclose(f);
+    }
+    return font.len ? tc_buf_append(body, font.data, font.len) : TC_ERR_INVALID;
+}
+
 static void exercise(tc_page *p, float w)
 {
     tc_surface s;
@@ -82,7 +109,7 @@ static void exercise(tc_page *p, float w)
     int i;
 
     tc_page_load_styles(p, fuzz_sheet, NULL, NULL);
-    if (tc_page_layout(p, fonts(), w, 200) != TC_OK)
+    if (tc_page_layout(p, fonts(), w, 200) != TC_OK || tc_page_load_fonts(p, fonts(), fuzz_font, NULL, NULL) != TC_OK)
         return;
     tc_layout_size(p->layout, &dw, &dh);
     if (tc_surface_init(&s, 64, 48) == TC_OK) {

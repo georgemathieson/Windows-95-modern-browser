@@ -559,6 +559,118 @@ static void test_animation(void)
     tc_font_set_free(fonts);
 }
 
+/* The font a text fragment starting with text is drawn with, or NULL. */
+static const tc_font *frag_font(const tc_box *b, const char *text, int depth)
+{
+    const tc_box *c;
+    const tc_font *found = NULL;
+    uint32_t i;
+    size_t len = strlen(text);
+    for (i = 0; i < b->nfrags && !found; i++) {
+        const tc_frag *f = &b->frags[i];
+        if (f->type == TC_FRAG_TEXT && f->len >= len && memcmp(f->text, text, len) == 0)
+            found = f->font;
+    }
+    for (c = b->first; c && !found && depth < 50; c = c->next)
+        found = frag_font(c, text, depth + 1);
+    return found;
+}
+
+static const char *family_of(const tc_page *p, const char *text, uint32_t cp)
+{
+    const tc_font *f = p->layout ? frag_font(tc_layout_root(p->layout), text, 0) : NULL;
+    return f ? tc_font_family(tc_font_for_char(f, cp), NULL, NULL) : "(no text)";
+}
+
+static void base64(const unsigned char *in, size_t len, char *out)
+{
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t i;
+    for (i = 0; i < len; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16 | (i + 1 < len ? (uint32_t)in[i + 1] << 8 : 0) | (i + 2 < len ? in[i + 2] : 0);
+        *out++ = digits[v >> 18];
+        *out++ = digits[v >> 12 & 63];
+        *out++ = i + 1 < len ? digits[v >> 6 & 63] : '=';
+        *out++ = i + 2 < len ? digits[v & 63] : '=';
+    }
+    *out = '\0';
+}
+
+static void test_web_fonts(void)
+{
+    static const char head[] =
+        "<!DOCTYPE html><meta charset=utf-8><style>"
+        "@font-face { font-family: Web; src: url(missing.woff2) format(woff2), url(fonts/tachyon-test-cjk.woff2)"
+        " format(woff2); unicode-range: U+4E00-9FFF }"
+        "@font-face { font-family: Web; src: url(never.woff2); unicode-range: U+0400-04FF }"
+        "@font-face { font-family: Later; src: url(later.woff2) }"
+        "@font-face { font-family: Data; src: url(data:font/woff2;base64,";
+    static const char tail[] =
+        ") }"
+        "#a { font-family: Web, 'Tachyon Test Symbols' } #b { font-family: 'Tachyon Test Symbols', Later }"
+        "#c { font-family: Data, 'Tachyon Test Symbols' }"
+        "</style><p id=a>\xE4\xB8\xAD abc</p><p id=b>xyz</p><p id=c>\xE3\x81\x82</p>";
+    const tc_test_blob *woff2 = tc_test_blob_get("tachyon-test-cjk.woff2"), *ttc = tc_test_blob_get("tachyon-test.ttc");
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    char *html;
+
+    TC_CHECK(woff2 && ttc && fonts);
+    if (!woff2 || !ttc || !fonts || !(html = malloc(sizeof head + woff2->len * 2 + sizeof tail))) {
+        tc_font_set_free(fonts);
+        return;
+    }
+    /* Installed: the collection's two families. */
+    TC_CHECK_INT(tc_font_set_add_data(fonts, ttc->data, ttc->len, NULL), TC_OK);
+    strcpy(html, head);
+    base64(woff2->data, woff2->len, html + strlen(html));
+    strcat(html, tail);
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/dir/page.html", html);
+    free(html);
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_font_count(&p), 4);
+    if (tc_page_font_count(&p) == 4) {
+        /* Wanted: the face with the Chinese character. Not wanted: the
+           Cyrillic one, nor a family after an installed one. */
+        TC_CHECK_INT(tc_page_font_state(&p, 0), TC_PAGE_FONT_WAITING);
+        TC_CHECK_STR(tc_page_font_url(&p, 0), "http://example.com/dir/missing.woff2");
+        TC_CHECK_INT(tc_page_font_state(&p, 1), TC_PAGE_FONT_UNUSED);
+        TC_CHECK_STR(tc_page_font_url(&p, 1), "");
+        TC_CHECK_INT(tc_page_font_state(&p, 2), TC_PAGE_FONT_UNUSED);
+        TC_CHECK_INT(tc_page_font_arrived(&p, 2, woff2->data, woff2->len), 0); /* not waiting: ignored */
+        /* The data: URL font is there already. */
+        TC_CHECK_INT(tc_page_font_state(&p, 3), TC_PAGE_FONT_LOADED);
+        TC_CHECK_STR(family_of(&p, "\xE3\x81\x82", 0x3042), "Data");
+        /* Meanwhile the next family draws. */
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 0x4E2D), "Tachyon Test CJK");
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 'a'), "Tachyon Test Symbols");
+
+        /* The first src is missing; the second loads. */
+        TC_CHECK_INT(tc_page_load_fonts(&p, fonts, serve_image, &srv, NULL), TC_OK);
+        TC_CHECK_STR(srv.asked, "http://example.com/dir/missing.woff2 http://example.com/dir/fonts/tachyon-test-cjk.woff2 ");
+        TC_CHECK_INT(tc_page_font_state(&p, 0), TC_PAGE_FONT_LOADED);
+        TC_CHECK_INT(tc_page_font_state(&p, 1), TC_PAGE_FONT_UNUSED);
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 0x4E2D), "Web");
+        /* Its range has no Latin letters: they come from the next family. */
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 'a'), "Tachyon Test Symbols");
+    }
+    tc_page_free(&p);
+
+    /* Every src failing: failed, and nothing more to fetch. */
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/",
+              "<style>@font-face { font-family: Gone; src: url(a.woff), url(b.woff) } p { font-family: Gone }</style>"
+              "<p>text</p>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_load_fonts(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    TC_CHECK_INT(srv.count, 2);
+    TC_CHECK_INT(tc_page_font_state(&p, 0), TC_PAGE_FONT_FAILED);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
 void tc_suite_page(void)
 {
     TC_RUN(test_style_sheets);
@@ -571,4 +683,5 @@ void tc_suite_page(void)
     TC_RUN(test_image_order);
     TC_RUN(test_animation);
     TC_RUN(test_inline_svg);
+    TC_RUN(test_web_fonts);
 }

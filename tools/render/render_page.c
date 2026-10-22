@@ -118,6 +118,8 @@ int render_file(const char *path, tc_font_set *fonts, int w, int h, int full, in
     if (!err)
         err = tc_page_layout(&page, fonts, (float)w, (float)h);
     if (!err)
+        err = tc_page_load_fonts(&page, fonts, fetch_file, NULL, NULL);
+    if (!err)
         err = tc_page_load_images(&page, fonts, fetch_file, NULL, NULL);
     if (!err) {
         tc_layout_size(page.layout, &out->doc_w, &out->doc_h);

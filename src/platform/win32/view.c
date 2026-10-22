@@ -1636,3 +1636,13 @@ void tw_view_image_arrived(HWND hwnd, size_t index, tc_image *img)
     if (!v->image_timer) /* setting it again would put it off */
         v->image_timer = SetTimer(hwnd, IMAGE_TIMER, IMAGE_MS, NULL) != 0;
 }
+
+void tw_view_font_arrived(HWND hwnd, size_t index, const void *data, size_t len)
+{
+    view *v = get_view(hwnd);
+    if (!v || !v->has_page)
+        return;
+    v->image_relayout |= tc_page_font_arrived(&v->page, index, data, len);
+    if (!v->image_timer)
+        v->image_timer = SetTimer(hwnd, IMAGE_TIMER, IMAGE_MS, NULL) != 0;
+}

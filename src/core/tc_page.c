@@ -2,11 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_css_syntax.h"
 #include "tc_fetch.h"
 #include "tc_image.h"
+#include "tc_log.h"
 #include "tc_mime.h"
 #include "tc_page.h"
 #include "tc_platform.h"
+#include "tc_utf8.h"
 
 #define MAX_SHEETS  64 /* style sheets and imports per page */
 #define MAX_IMPORTS 4  /* nested @import depth */
@@ -52,6 +55,12 @@ int tc_page_fetch_image_http(void *ctx, const char *url, tc_buf *body, char *cha
                     charset_size);
 }
 
+/* Any type: browsers ask for fonts so. */
+int tc_page_fetch_font_http(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size)
+{
+    return fetch_as(ctx, url, "*/*", body, charset, charset_size);
+}
+
 int tc_page_init(tc_page *p, const char *url, tc_html_page *html)
 {
     const tc_node *n;
@@ -73,11 +82,13 @@ int tc_page_init(tc_page *p, const char *url, tc_html_page *html)
 }
 
 static void images_free(struct tc_page_images *im);
+static void fonts_free(struct tc_page_fonts *pf);
 
 void tc_page_free(tc_page *p)
 {
     images_free(p->images);
     tc_layout_free(p->layout);
+    fonts_free(p->webfonts); /* after the layout, whose text uses its fonts */
     tc_styled_free(p->styled);
     tc_style_sources_free(p->sources, p->nsources);
     tc_html_page_free(&p->html);
@@ -1028,7 +1039,357 @@ void tc_page_set_image_memory(tc_page *p, size_t bytes)
         p->images->memory = bytes;
 }
 
-int tc_page_layout(tc_page *p, tc_font_set *fonts, float w, float h)
+/* ---- Web fonts ---- */
+
+#define MAX_PAGE_FONTS 256
+#define PLAN_FAMILIES  8
+#define PLAN_FACES     64
+#define PLAN_CACHE     32
+
+typedef struct page_font {
+    const tc_font_face *rule;
+    char *url;                 /* the src being tried, absolute; NULL while unused */
+    uint32_t src;              /* its index in the rule's urls */
+    uint8_t state;             /* TC_PAGE_FONT_* */
+} page_font;
+
+struct tc_page_fonts {
+    tc_font_set *set;          /* the page's fonts, in front of the installed ones */
+    page_font *items;
+    uint32_t n, cap;
+};
+
+static void fonts_free(struct tc_page_fonts *pf)
+{
+    uint32_t i;
+    if (!pf)
+        return;
+    for (i = 0; i < pf->n; i++)
+        free(pf->items[i].url);
+    free(pf->items);
+    tc_font_set_free(pf->set);
+    free(pf);
+}
+
+/* A URL resolved against base (NULL: the page's), malloc'd. */
+static char *resolve(const tc_page *p, const char *url, const char *base)
+{
+    tc_url abs, base_url;
+    char *out = NULL;
+    int err;
+    if (base) {
+        if (tc_url_parse(base, NULL, &base_url) != TC_OK)
+            return NULL;
+        err = tc_url_parse(url, &base_url, &abs);
+        tc_url_free(&base_url);
+    } else {
+        err = tc_url_parse(url, &p->base, &abs);
+    }
+    if (err)
+        return NULL;
+    if ((out = malloc(strlen(abs.href) + 1)) != NULL)
+        strcpy(out, abs.href);
+    tc_url_free(&abs);
+    return out;
+}
+
+/* On to the rule's src from e->src on: waiting for it, or failed if
+   there are no more. */
+static void next_src(const tc_page *p, page_font *e)
+{
+    free(e->url);
+    e->url = NULL;
+    for (; e->src < e->rule->nurls; e->src++)
+        if ((e->url = resolve(p, e->rule->urls[e->src], e->rule->base)) != NULL) {
+            e->state = TC_PAGE_FONT_WAITING;
+            return;
+        }
+    e->state = TC_PAGE_FONT_FAILED;
+}
+
+/* The @font-face rules in force, added to the page's list. The first
+   gives the page its own font set. */
+static int find_fonts(tc_page *p, tc_font_set *installed, const tc_media_env *env)
+{
+    struct tc_page_fonts *pf = p->webfonts;
+    const tc_font_face **rules;
+    size_t n, i;
+    uint32_t k;
+    int err = tc_style_font_faces(p->sources, p->nsources, env, &rules, &n);
+    if (err || !n) {
+        free((void *)rules);
+        return err;
+    }
+    if (!pf) {
+        if (!(pf = calloc(1, sizeof *pf)) || !(pf->set = tc_font_set_new_child(installed))) {
+            free(pf);
+            free((void *)rules);
+            return TC_ERR_NOMEM;
+        }
+        p->webfonts = pf;
+    }
+    for (i = 0; i < n && pf->n < MAX_PAGE_FONTS; i++) {
+        for (k = 0; k < pf->n && pf->items[k].rule != rules[i]; k++)
+            ;
+        if (k < pf->n)
+            continue;
+        if (pf->n == pf->cap) {
+            uint32_t cap = pf->cap ? pf->cap * 2 : 8;
+            page_font *grown = realloc(pf->items, cap * sizeof *grown);
+            if (!grown) {
+                free((void *)rules);
+                return TC_ERR_NOMEM;
+            }
+            pf->items = grown;
+            pf->cap = cap;
+        }
+        memset(&pf->items[pf->n], 0, sizeof pf->items[pf->n]);
+        pf->items[pf->n++].rule = rules[i];
+    }
+    free((void *)rules);
+    return TC_OK;
+}
+
+/* For one font-family, weight and style: the web faces CSS font matching
+   would choose for each family, up to the first installed family. */
+typedef struct plan {
+    const tc_font_families *families;
+    int weight, italic;
+    uint32_t nfaces, ngroups;
+    page_font *faces[PLAN_FACES];
+    uint8_t group_end[PLAN_FAMILIES];
+} plan;
+
+typedef struct want_ctx {
+    tc_page *p;
+    tc_font_set *installed;
+    plan cache[PLAN_CACHE];
+    int wanted;                /* fonts newly waiting */
+} want_ctx;
+
+static const plan *plan_for(want_ctx *w, const tc_style *s)
+{
+    struct tc_page_fonts *pf = w->p->webfonts;
+    int italic = s->font_style != TC_FONT_NORMAL;
+    uint32_t slot = (uint32_t)(((uintptr_t)s->font_family >> 4) ^ s->font_weight ^ (uint32_t)italic) % PLAN_CACHE;
+    plan *pl = &w->cache[slot];
+    uint32_t i, k;
+    if (pl->families == s->font_family && pl->weight == s->font_weight && pl->italic == italic)
+        return pl;
+    pl->families = s->font_family;
+    pl->weight = s->font_weight;
+    pl->italic = italic;
+    pl->nfaces = pl->ngroups = 0;
+    for (i = 0; s->font_family && i < s->font_family->count && pl->ngroups < PLAN_FAMILIES; i++) {
+        const char *family = s->font_family->names[i];
+        int best = -1;
+        for (k = 0; k < pf->n; k++) {
+            const tc_font_face *r = pf->items[k].rule;
+            int score;
+            if (!tc_css_ascii_ieq(r->family, family))
+                continue;
+            score = tc_font_weight_distance(r->weight_min, r->weight_max, s->font_weight) +
+                    (r->italic != italic) * 100000;
+            if (best < 0 || score < best)
+                best = score;
+        }
+        if (best < 0) {
+            if (tc_font_set_has_family(w->installed, family))
+                break; /* installed: it, or the fallbacks behind it, will draw the rest */
+            continue;
+        }
+        for (k = 0; k < pf->n && pl->nfaces < PLAN_FACES; k++) {
+            const tc_font_face *r = pf->items[k].rule;
+            if (tc_css_ascii_ieq(r->family, family) &&
+                tc_font_weight_distance(r->weight_min, r->weight_max, s->font_weight) +
+                        (r->italic != italic) * 100000 ==
+                    best)
+                pl->faces[pl->nfaces++] = &pf->items[k];
+        }
+        pl->group_end[pl->ngroups++] = (uint8_t)pl->nfaces;
+    }
+    return pl;
+}
+
+static int in_ranges(const tc_font_face *r, uint32_t cp)
+{
+    uint32_t i;
+    if (!r->ranges)
+        return 1;
+    for (i = 0; i < r->nranges; i++)
+        if (cp >= r->ranges[2 * i] && cp <= r->ranges[2 * i + 1])
+            return 1;
+    return 0;
+}
+
+/* Each character's face: the first family's face with it in range that
+   hasn't failed. */
+static void want_text(want_ctx *w, const tc_style *s, const char *text, size_t len)
+{
+    const plan *pl = plan_for(w, s);
+    size_t i = 0;
+    if (!pl->ngroups)
+        return;
+    while (i < len) {
+        uint32_t cp, g, k = 0;
+        i += tc_utf8_decode(text + i, len - i, &cp);
+        if (cp < 0x20)
+            continue;
+        for (g = 0; g < pl->ngroups; g++) {
+            page_font *found = NULL;
+            for (; k < pl->group_end[g] && !found; k++)
+                if (pl->faces[k]->state != TC_PAGE_FONT_FAILED && in_ranges(pl->faces[k]->rule, cp))
+                    found = pl->faces[k];
+            k = pl->group_end[g];
+            if (!found)
+                continue;
+            if (found->state == TC_PAGE_FONT_UNUSED) {
+                found->src = 0;
+                next_src(w->p, found);
+                w->wanted += found->state == TC_PAGE_FONT_WAITING;
+            }
+            break;
+        }
+    }
+}
+
+static void want_boxes(want_ctx *w, const tc_box *b, int depth)
+{
+    const tc_box *c;
+    uint32_t i;
+    if (depth > MAX_WALK_DEPTH)
+        return;
+    for (i = 0; i < b->nfrags; i++) {
+        const tc_frag *f = &b->frags[i];
+        if (f->type == TC_FRAG_TEXT && f->box && f->box->style)
+            want_text(w, f->box->style, f->text, f->len);
+        else if (f->type == TC_FRAG_ATOMIC)
+            want_boxes(w, f->box, depth + 1);
+    }
+    if (!b->has_lines)
+        for (c = b->first; c; c = c->next)
+            want_boxes(w, c, depth + 1);
+}
+
+/* Read a waiting font that's a data: URL. Returns 1 if it loaded. */
+static int read_data_font(tc_page *p, size_t i)
+{
+    page_font *e = &p->webfonts->items[i];
+    int loaded = 0;
+    while (e->state == TC_PAGE_FONT_WAITING && strncmp(e->url, "data:", 5) == 0) {
+        tc_buf bytes;
+        tc_buf_init(&bytes);
+        if (data_url(e->url, &bytes) == TC_OK)
+            loaded = tc_page_font_arrived(p, i, bytes.data, bytes.len);
+        else
+            loaded = tc_page_font_arrived(p, i, NULL, 0);
+        tc_buf_free(&bytes);
+    }
+    return loaded;
+}
+
+/* Which fonts the laid out text needs. Returns 1 if a data: URL font
+   among them loaded, so the page must be laid out again. */
+static int want_fonts(tc_page *p, tc_font_set *installed)
+{
+    struct tc_page_fonts *pf = p->webfonts;
+    want_ctx *w;
+    uint32_t i;
+    int unused = 0, loaded = 0;
+    if (!pf || !p->layout || !tc_layout_root(p->layout))
+        return 0;
+    for (i = 0; i < pf->n; i++)
+        unused |= pf->items[i].state == TC_PAGE_FONT_UNUSED;
+    if (!unused || !(w = calloc(1, sizeof *w)))
+        return 0;
+    w->p = p;
+    w->installed = installed;
+    want_boxes(w, tc_layout_root(p->layout), 0);
+    if (w->wanted)
+        tc_trace("page: %d web fonts wanted", w->wanted);
+    free(w);
+    for (i = 0; i < pf->n; i++)
+        if (pf->items[i].state == TC_PAGE_FONT_WAITING)
+            loaded |= read_data_font(p, i);
+    return loaded;
+}
+
+size_t tc_page_font_count(const tc_page *p)
+{
+    return p->webfonts ? p->webfonts->n : 0;
+}
+
+const char *tc_page_font_url(const tc_page *p, size_t i)
+{
+    return p->webfonts && i < p->webfonts->n && p->webfonts->items[i].url ? p->webfonts->items[i].url : "";
+}
+
+int tc_page_font_state(const tc_page *p, size_t i)
+{
+    return p->webfonts && i < p->webfonts->n ? p->webfonts->items[i].state : TC_PAGE_FONT_FAILED;
+}
+
+int tc_page_font_arrived(tc_page *p, size_t i, const void *data, size_t len)
+{
+    struct tc_page_fonts *pf = p->webfonts;
+    page_font *e;
+    const tc_font_face *r;
+    int err = TC_ERR_INVALID;
+    if (!pf || i >= pf->n || pf->items[i].state != TC_PAGE_FONT_WAITING)
+        return 0;
+    e = &pf->items[i];
+    r = e->rule;
+    if (data)
+        err = tc_font_set_add_web(pf->set, data, len, r->family, r->weight_min, r->weight_max, r->italic, r->ranges,
+                                  r->nranges);
+    if (!err) {
+        e->state = TC_PAGE_FONT_LOADED;
+        return 1;
+    }
+    tc_log("font %.100s: %s", e->url, data ? tc_err_text(err) : "not fetched");
+    e->src++;
+    next_src(p, e);
+    return 0;
+}
+
+int tc_page_load_fonts(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, void *ctx,
+                       void (*progress)(void *ctx, unsigned n, const char *url))
+{
+    unsigned fetched = 0, round;
+    int err = TC_OK;
+    /* Each src is tried once, so this ends; another round only if laying
+       out again wants more. */
+    for (round = 0; round < 4 && !err; round++) {
+        size_t i;
+        int relayout = 0, waiting = 1;
+        while (waiting) {
+            waiting = 0;
+            for (i = 0; i < tc_page_font_count(p); i++) {
+                tc_buf body;
+                char charset[64];
+                if (tc_page_font_state(p, i) != TC_PAGE_FONT_WAITING)
+                    continue;
+                waiting = 1;
+                if (progress)
+                    progress(ctx, ++fetched, tc_page_font_url(p, i));
+                tc_buf_init(&body);
+                if (fetch(ctx, tc_page_font_url(p, i), &body, charset, sizeof charset) == TC_OK)
+                    relayout |= tc_page_font_arrived(p, i, body.data ? body.data : "", body.len);
+                else
+                    relayout |= tc_page_font_arrived(p, i, NULL, 0);
+                tc_buf_free(&body);
+            }
+        }
+        if (!relayout || !p->layout)
+            break;
+        err = tc_page_layout(p, fonts, p->width, p->height);
+    }
+    return err;
+}
+
+/* ---- Layout ---- */
+
+static int layout_once(tc_page *p, tc_font_set *fonts, float w, float h)
 {
     tc_media_env env;
     tc_styled *styled = NULL;
@@ -1047,7 +1408,10 @@ int tc_page_layout(tc_page *p, tc_font_set *fonts, float w, float h)
     if (!err)
         err = find_images(p, styled, &env);
     if (!err)
-        err = tc_layout_document(p->html.doc, styled, fonts, &p->images->source, w, h, &layout);
+        err = find_fonts(p, fonts, &env);
+    if (!err)
+        err = tc_layout_document(p->html.doc, styled, p->webfonts ? p->webfonts->set : fonts, &p->images->source, w,
+                                 h, &layout);
     if (err) {
         tc_layout_free(layout);
         tc_styled_free(styled);
@@ -1062,6 +1426,15 @@ int tc_page_layout(tc_page *p, tc_font_set *fonts, float w, float h)
     p->style_ms = t1 - t0;
     p->layout_ms = tc_time_ms() - t1;
     return TC_OK;
+}
+
+int tc_page_layout(tc_page *p, tc_font_set *fonts, float w, float h)
+{
+    int err = layout_once(p, fonts, w, h);
+    /* Fonts in data: URLs arrive at once: once more with them. */
+    if (!err && want_fonts(p, fonts))
+        err = layout_once(p, fonts, w, h);
+    return err;
 }
 
 static const tc_element *link_element(const tc_element *el)

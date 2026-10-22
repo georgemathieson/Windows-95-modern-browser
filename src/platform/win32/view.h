@@ -72,6 +72,9 @@ const tc_page *tw_view_page(HWND view);
 /* A picture for the page arrived (index: the page's; img taken over, NULL
    if it failed). Shown, or the page laid out again, a moment later. */
 void tw_view_image_arrived(HWND view, size_t index, tc_image *img);
+/* A web font for the page arrived (index: the page's; data NULL if it
+   couldn't be fetched). The page is laid out again a moment later. */
+void tw_view_font_arrived(HWND view, size_t index, const void *data, size_t len);
 
 /* Dither to 256 colours (decision 39) on any display, not only a
    256-colour one, to see what one shows (--dither). */

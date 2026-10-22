@@ -7,6 +7,7 @@
 #include "tc_http.h"
 #include "tc_log.h"
 #include "tc_mime.h"
+#include "tc_woff.h"
 
 typedef struct start_args {
     tw_load *load;
@@ -202,19 +203,22 @@ void tw_load_free(tw_load *load)
     }
 }
 
-/* ---- Pictures ---- */
+/* ---- Pictures and web fonts ---- */
 
 typedef struct picture {
     char *url;
     size_t index;
+    int font;          /* a web font, not a picture */
     tc_image *image;
+    tc_buf bytes;      /* a font: TrueType, unpacked from WOFF or WOFF2 here */
+    int fetched;
 } picture;
 
 struct tw_images {
     HWND notify;
     volatile int cancel;
     picture *items;
-    unsigned count;
+    unsigned count, fonts;
     volatile unsigned done;
     char *proxy_host;
     tw_load_options opts;
@@ -232,43 +236,72 @@ static void images_thread(void *arg)
     fo.cancel = &job->cancel;
     fo.pool = job->opts.pool;
     fo.cache = job->opts.cache;
-    tc_log("loader: %u pictures", job->count);
+    tc_log("loader: %u fonts, %u pictures", job->fonts, job->count - job->fonts);
     for (i = 0; i < job->count && !job->cancel; i++) {
+        picture *item = &job->items[i];
         tc_buf body;
         char charset[64];
         int err;
         tc_buf_init(&body);
-        err = tc_page_fetch_image_http(&fo, job->items[i].url, &body, charset, sizeof charset);
-        if (!err)
-            err = tc_image_new(body.data ? body.data : "", body.len, &job->items[i].image);
+        if (item->font) {
+            /* Unpacking takes a while on a Pentium: better here than in
+               the window. */
+            err = tc_page_fetch_font_http(&fo, item->url, &body, charset, sizeof charset);
+            if (!err && tc_woff_sniff(body.data, body.len))
+                err = tc_woff_decode(body.data, body.len, &item->bytes);
+            else if (!err)
+                err = tc_buf_append(&item->bytes, body.data ? body.data : "", body.len);
+            item->fetched = !err;
+        } else {
+            err = tc_page_fetch_image_http(&fo, item->url, &body, charset, sizeof charset);
+            if (!err)
+                err = tc_image_new(body.data ? body.data : "", body.len, &item->image);
+        }
         tc_buf_free(&body);
         if (err && err != TC_ERR_CANCELLED)
-            tc_trace("picture %u: %s", i, tc_err_text(err));
+            tc_trace("%s %u: %s", item->font ? "font" : "picture", i, tc_err_text(err));
         job->done = i + 1;
         PostMessageA(job->notify, WM_TW_IMAGE, i, (LPARAM)job);
     }
-    tc_log("loader: %u of %u pictures fetched%s", job->done, job->count, job->cancel ? " (stopped)" : "");
+    tc_log("loader: %u of %u fetched%s", job->done, job->count, job->cancel ? " (stopped)" : "");
     PostMessageA(job->notify, WM_TW_IMAGES_DONE, 0, (LPARAM)job);
 }
 
 tw_images *tw_images_start(HWND notify, const tc_page *page, int top, int bottom, const tw_load_options *opts)
 {
-    size_t i, n = tc_page_image_count(page), count, *order;
+    size_t i, n = tc_page_image_count(page), nfonts = tc_page_font_count(page), fonts = 0, count = 0, *order;
     tw_images *job;
 
-    if (!n || !(order = malloc(n * sizeof *order)))
+    for (i = 0; i < nfonts; i++)
+        fonts += tc_page_font_state(page, i) == TC_PAGE_FONT_WAITING;
+    if (!(order = malloc((n ? n : 1) * sizeof *order)))
         return NULL;
-    count = tc_page_image_order(page, (float)top, (float)bottom, order, n);
-    if (!count || !(job = calloc(1, sizeof *job))) {
+    if (n)
+        count = tc_page_image_order(page, (float)top, (float)bottom, order, n);
+    if (!(count + fonts) || !(job = calloc(1, sizeof *job))) {
         free(order);
         return NULL;
     }
     job->notify = notify;
     job->opts = *opts;
-    job->items = calloc(count, sizeof *job->items);
+    job->items = calloc(count + fonts, sizeof *job->items);
     if (!job->items || (opts->proxy_host && !(job->proxy_host = copy_string(opts->proxy_host))))
         goto fail;
+    /* Fonts first: the text everywhere waits for them. */
+    for (i = 0; i < nfonts; i++) {
+        picture *item = &job->items[job->count];
+        if (tc_page_font_state(page, i) != TC_PAGE_FONT_WAITING)
+            continue;
+        item->index = i;
+        item->font = 1;
+        tc_buf_init(&item->bytes);
+        if (!(item->url = copy_string(tc_page_font_url(page, i))))
+            goto fail;
+        job->count++;
+        job->fonts++;
+    }
     for (i = 0; i < count; i++) {
+        tc_buf_init(&job->items[job->count].bytes);
         job->items[job->count].index = order[i];
         if (!(job->items[job->count].url = copy_string(tc_page_image_url(page, order[i]))))
             goto fail;
@@ -300,6 +333,16 @@ tc_image *tw_images_take(tw_images *job, WPARAM slot)
     return img;
 }
 
+int tw_images_is_font(const tw_images *job, WPARAM slot)
+{
+    return slot < job->count && job->items[slot].font;
+}
+
+const tc_buf *tw_images_font(const tw_images *job, WPARAM slot)
+{
+    return slot < job->count && job->items[slot].font && job->items[slot].fetched ? &job->items[slot].bytes : NULL;
+}
+
 void tw_images_progress(const tw_images *job, unsigned *done, unsigned *total)
 {
     *done = job->done;
@@ -319,6 +362,7 @@ void tw_images_free(tw_images *job)
     for (i = 0; job->items && i < job->count; i++) {
         free(job->items[i].url);
         tc_image_free(job->items[i].image);
+        tc_buf_free(&job->items[i].bytes);
     }
     free(job->items);
     free(job->proxy_host);

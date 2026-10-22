@@ -7,6 +7,8 @@
 
 #include "stb_truetype.h"
 #include "tc_font.h"
+#include "tc_font_check.h"
+#include "tc_woff.h"
 #include "tc_platform.h"
 #include "tc_utf8.h"
 
@@ -22,12 +24,17 @@ enum { COVERAGE_UNKNOWN, COVERAGE_READY, COVERAGE_FAILED };
 #define MAX_TABLES 256
 #define MAX_RANGES (1u << 17)   /* character ranges in a cmap */
 #define FALLBACK_CACHE 64
+#define MAX_PREFER 4            /* web families a font remembers from its font-family */
 
 typedef struct face {
     char *path;                 /* NULL: added from memory, data holds it */
     char *family;
-    uint16_t weight;
+    uint16_t weight, weight_max; /* what it matches: a range for a variable web font */
     uint8_t italic;
+    uint16_t own_weight;        /* what it looks like, as the file says: synthesis goes by this */
+    uint8_t own_italic;
+    uint32_t *urange;           /* @font-face's unicode-range: first, last... sorted; NULL for all */
+    uint32_t nurange;
     uint8_t state;
     uint8_t coverage;           /* COVERAGE_* */
     int index;                  /* in a collection */
@@ -54,6 +61,9 @@ static uint8_t no_bitmap, big_glyph;
 struct tc_font {
     tc_font_set *set;
     face *face;                 /* NULL: the box font */
+    tc_font *base;              /* with preferences: the same font without, whose glyphs it uses */
+    const char *prefer[MAX_PREFER]; /* web families to look in first for a character it lacks */
+    uint32_t nprefer;
     float size, scale;
     uint8_t fake_bold, fake_italic;
     tc_font_metrics metrics;
@@ -69,7 +79,8 @@ struct tc_font {
 #define MATCH_CACHE 64
 
 struct tc_font_set {
-    tc_mutex *lock;
+    tc_mutex *lock;             /* a child shares its parent's */
+    tc_font_set *parent;        /* a page's web fonts: the set behind them */
     face **faces;               /* each allocated alone: fonts point to them */
     uint32_t nfaces, faces_cap;
     tc_font **fonts;
@@ -83,6 +94,15 @@ struct tc_font_set {
         const tc_font *font;
     } cache[MATCH_CACHE];
 };
+
+/* A character's glyph, 0 if none. A glyph number a broken cmap gives past
+   the font's glyphs counts as none: stb_truetype would read its metrics
+   from beyond the hmtx table. */
+static int glyph_index(const stbtt_fontinfo *info, uint32_t cp)
+{
+    int g = stbtt_FindGlyphIndex(info, (int)cp);
+    return g > 0 && g < info->numGlyphs ? g : 0;
+}
 
 static uint16_t u16(const unsigned char *p)
 {
@@ -419,23 +439,76 @@ static int add_face(tc_font_set *set, const char *path, const char *family, int 
     set->faces[set->nfaces] = f;
     if (weight < 10)
         weight *= 100; /* some old fonts give 1 to 9 */
-    f->weight = (uint16_t)TC_CLAMP(weight, 1, 1000);
-    f->italic = (uint8_t)(italic != 0);
+    f->weight = f->weight_max = f->own_weight = (uint16_t)TC_CLAMP(weight, 1, 1000);
+    f->italic = f->own_italic = (uint8_t)(italic != 0);
     f->index = index;
     set->nfaces++;
+    return TC_OK;
+}
+
+/* Matches and fallbacks found before a face was added may be wrong now. */
+static void forget_matches(tc_font_set *set)
+{
+    uint32_t i;
+    for (i = 0; i < MATCH_CACHE; i++)
+        set->cache[i].font = NULL;
+    for (i = 0; i < set->nfonts; i++)
+        memset(set->fonts[i]->fallback, 0, sizeof set->fonts[i]->fallback);
+}
+
+/* What @font-face says about a web font. */
+typedef struct web_face {
+    int weight_min, weight_max, italic;
+    const uint32_t *ranges;
+    uint32_t nranges;
+} web_face;
+
+static int compare_pairs(const void *a, const void *b)
+{
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* Give a face its rule's descriptors; the ones the file gave become its own. */
+static int set_web(face *f, const web_face *web)
+{
+    uint32_t i, k = 0;
+    f->own_weight = f->weight;
+    f->own_italic = f->italic;
+    f->weight = (uint16_t)TC_CLAMP(web->weight_min, 1, 1000);
+    f->weight_max = (uint16_t)TC_CLAMP(web->weight_max, f->weight, 1000);
+    f->italic = (uint8_t)(web->italic != 0);
+    if (!web->ranges || !web->nranges)
+        return TC_OK;
+    if (!(f->urange = malloc(web->nranges * 2 * sizeof *f->urange)))
+        return TC_ERR_NOMEM;
+    memcpy(f->urange, web->ranges, web->nranges * 2 * sizeof *f->urange);
+    qsort(f->urange, web->nranges, 2 * sizeof *f->urange, compare_pairs);
+    /* Merged where they overlap, for the binary search. */
+    for (i = 0; i < web->nranges; i++) {
+        uint32_t first = f->urange[2 * i], last = f->urange[2 * i + 1];
+        if (k && first <= f->urange[2 * k - 1] + 1) {
+            f->urange[2 * k - 1] = TC_MAX(f->urange[2 * k - 1], last);
+        } else {
+            f->urange[2 * k] = first;
+            f->urange[2 * k + 1] = last;
+            k++;
+        }
+    }
+    f->nurange = k;
     return TC_OK;
 }
 
 /* Add each face of a font file or collection, named as it names itself
    (or family), reading only the tables that say so. A face from memory
    keeps a copy of the bytes. */
-static int add_faces(tc_font_set *set, font_source *src, const char *path, const char *family)
+static int add_faces(tc_font_set *set, font_source *src, const char *path, const char *family, const web_face *web)
 {
     int count = 1, i, err = TC_OK, added = 0;
-    for (i = 0; i < count && err == TC_OK; i++) {
+    for (i = 0; i < count && err == TC_OK && !(web && added); i++) {
         long start = face_start(src, i, &count);
         uint32_t len = 0, table;
-        unsigned char *t;
+        unsigned char *t, *copy = NULL;
         char *name = NULL;
         int w = 400, it = 0;
         if (start < 0)
@@ -459,18 +532,37 @@ static int add_faces(tc_font_set *set, font_source *src, const char *path, const
             it = (mac & 2) != 0;
             free(t);
         }
-        tc_mutex_lock(set->lock);
-        err = add_face(set, path, family ? family : name, w, it, i);
-        if (!err && src->data) {
-            face *f = set->faces[set->nfaces - 1];
-            if ((f->data = malloc(src->size)) != NULL) {
-                memcpy(f->data, src->data, src->size);
-                f->size = src->size;
-            } else {
-                f->state = FACE_FAILED;
+        if (src->data) {
+            /* From memory, so from the web: checked first (decision 38). */
+            if (!(copy = malloc(src->size))) {
+                free(name);
+                return TC_ERR_NOMEM;
+            }
+            memcpy(copy, src->data, src->size);
+            if (tc_font_check(copy, src->size, (uint32_t)start) != TC_OK) {
+                free(copy);
+                free(name);
+                continue;
             }
         }
+        tc_mutex_lock(set->lock);
+        err = add_face(set, path, family ? family : name, w, it, i);
+        if (!err && copy) {
+            face *f = set->faces[set->nfaces - 1];
+            f->data = copy;
+            f->size = src->size;
+            copy = NULL;
+            if (web && (err = set_web(f, web)) != TC_OK) {
+                set->nfaces--;
+                free(f->data);
+                free(f->family);
+                free(f);
+            }
+        }
+        if (!err)
+            forget_matches(set);
         tc_mutex_unlock(set->lock);
+        free(copy);
         free(name);
         added += !err;
     }
@@ -494,20 +586,50 @@ int tc_font_set_add_file(tc_font_set *set, const char *path, const char *family,
     }
     if (!source_open(&src, path))
         return TC_ERR_INVALID;
-    err = add_faces(set, &src, path, NULL);
+    err = add_faces(set, &src, path, NULL, NULL);
     source_close(&src);
     return err;
 }
 
-int tc_font_set_add_data(tc_font_set *set, const void *data, size_t len, const char *family)
+static int add_data(tc_font_set *set, const void *data, size_t len, const char *family, const web_face *web)
 {
     font_source src;
+    tc_buf sfnt;
+    int err;
     memset(&src, 0, sizeof src);
     src.data = data;
     src.size = len;
     if (!data || len <= 12 || len >= (size_t)MAX_FONT_FILE)
         return TC_ERR_INVALID;
-    return add_faces(set, &src, NULL, family);
+    if (!tc_woff_sniff(data, len))
+        return add_faces(set, &src, NULL, family, web);
+    /* WOFF or WOFF2: the TrueType font inside first. */
+    tc_buf_init(&sfnt);
+    err = tc_woff_decode(data, len, &sfnt);
+    if (!err) {
+        src.data = (const unsigned char *)sfnt.data;
+        src.size = sfnt.len;
+        err = add_faces(set, &src, NULL, family, web);
+    }
+    tc_buf_free(&sfnt);
+    return err;
+}
+
+int tc_font_set_add_data(tc_font_set *set, const void *data, size_t len, const char *family)
+{
+    return add_data(set, data, len, family, NULL);
+}
+
+int tc_font_set_add_web(tc_font_set *set, const void *data, size_t len, const char *family, int weight_min,
+                        int weight_max, int italic, const uint32_t *ranges, uint32_t nranges)
+{
+    web_face web;
+    web.weight_min = weight_min;
+    web.weight_max = weight_max;
+    web.italic = italic;
+    web.ranges = ranges;
+    web.nranges = nranges;
+    return family ? add_data(set, data, len, family, &web) : TC_ERR_INVALID;
 }
 
 struct add_ctx {
@@ -612,7 +734,7 @@ static int load_face(face *f)
             f->x_height = s16(f->data + os2 + 86);
             f->cap_height = s16(f->data + os2 + 88);
         } else {
-            int gx = stbtt_FindGlyphIndex(&f->info, 'x'), gh = stbtt_FindGlyphIndex(&f->info, 'H');
+            int gx = glyph_index(&f->info, 'x'), gh = glyph_index(&f->info, 'H');
             if (gx && stbtt_GetGlyphBox(&f->info, gx, &x0, &y0, &x1, &y1))
                 f->x_height = y1;
             if (gh && stbtt_GetGlyphBox(&f->info, gh, &x0, &y0, &x1, &y1))
@@ -647,6 +769,16 @@ tc_font_set *tc_font_set_new(void)
     return set;
 }
 
+tc_font_set *tc_font_set_new_child(tc_font_set *parent)
+{
+    tc_font_set *set = calloc(1, sizeof *set);
+    if (!set)
+        return NULL;
+    set->lock = parent->lock; /* one lock, so a font may draw with faces from both */
+    set->parent = parent;
+    return set;
+}
+
 static void free_glyphs(tc_font *f)
 {
     uint32_t i;
@@ -673,12 +805,14 @@ void tc_font_set_free(tc_font_set *set)
         free(set->faces[i]->family);
         free(set->faces[i]->data);
         free(set->faces[i]->ranges);
+        free(set->faces[i]->urange);
         free(set->faces[i]);
     }
     free(set->faces);
     for (i = 0; i < MATCH_CACHE; i++)
         free(set->cache[i].families);
-    tc_mutex_destroy(set->lock);
+    if (!set->parent)
+        tc_mutex_destroy(set->lock);
     free(set);
 }
 
@@ -722,8 +856,36 @@ static int weight_penalty(int have, int want)
     return have > want ? have - want : 1000 + want - have;
 }
 
-/* The family's face nearest the weight and style, or NULL. */
-static face *pick_face(tc_font_set *set, const char *family, int weight, int italic)
+int tc_font_weight_distance(int min, int max, int want)
+{
+    if (want > max)
+        return weight_penalty(max, want);
+    return weight_penalty(want > min ? want : min, want);
+}
+
+static int in_urange(const face *f, uint32_t cp)
+{
+    uint32_t lo = 0, hi = f->nurange;
+    if (!f->urange)
+        return 1;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (cp < f->urange[2 * mid])
+            hi = mid;
+        else if (cp > f->urange[2 * mid + 1])
+            lo = mid + 1;
+        else
+            return 1;
+    }
+    return 0;
+}
+
+static int face_has(face *f, uint32_t cp);
+
+/* The family's face nearest the weight and style, or NULL. cp: one that
+   has this character, or 0 for the family's first choice, which is one
+   whose unicode-range has a space if the best faces differ only in that. */
+static face *pick_face(tc_font_set *set, const char *family, int weight, int italic, uint32_t cp)
 {
     face *best = NULL;
     int best_score = 0;
@@ -731,9 +893,10 @@ static face *pick_face(tc_font_set *set, const char *family, int weight, int ita
     for (i = 0; i < set->nfaces; i++) {
         face *f = set->faces[i];
         int score;
-        if (f->state == FACE_FAILED || !ieq(f->family, family))
+        if (f->state == FACE_FAILED || !ieq(f->family, family) || (cp && !face_has(f, cp)))
             continue;
-        score = weight_penalty(f->weight, weight) + (f->italic != (italic != 0)) * 100000;
+        score = tc_font_weight_distance(f->weight, f->weight_max, weight) + (f->italic != (italic != 0)) * 100000;
+        score = score * 2 + !in_urange(f, ' ');
         if (!best || score < best_score) {
             best = f;
             best_score = score;
@@ -744,7 +907,7 @@ static face *pick_face(tc_font_set *set, const char *family, int weight, int ita
 
 static face *find_family(tc_font_set *set, const char *family, int weight, int italic)
 {
-    face *f = pick_face(set, family, weight, italic);
+    face *f = pick_face(set, family, weight, italic, 0);
     size_t i;
     const char *const *p;
     if (f)
@@ -752,7 +915,7 @@ static face *find_family(tc_font_set *set, const char *family, int weight, int i
     for (i = 0; i < TC_ARRAY_LEN(aliases); i++)
         if (ieq(family, aliases[i].name))
             for (p = aliases[i].fonts; *p; p++)
-                if ((f = pick_face(set, *p, weight, italic)) != NULL)
+                if ((f = pick_face(set, *p, weight, italic, 0)) != NULL)
                     return f;
     return NULL;
 }
@@ -789,7 +952,7 @@ static void set_metrics(tc_font *f)
     if (m->strikeout_thickness < 1)
         m->strikeout_thickness = 1;
     {
-        int adv, lsb, g = stbtt_FindGlyphIndex(&fc->info, ' ');
+        int adv, lsb, g = glyph_index(&fc->info, ' ');
         stbtt_GetGlyphHMetrics(&fc->info, g, &adv, &lsb);
         m->space_width = adv * s + f->fake_bold;
     }
@@ -801,7 +964,8 @@ static tc_font *get_font(tc_font_set *set, face *fc, float size, int fake_bold, 
     uint32_t i;
     for (i = 0; i < set->nfonts; i++) {
         f = set->fonts[i];
-        if (f->face == fc && f->size == size && f->fake_bold == fake_bold && f->fake_italic == fake_italic)
+        if (f->face == fc && f->size == size && f->fake_bold == fake_bold && f->fake_italic == fake_italic &&
+            !f->base)
             return f;
     }
     if (set->nfonts == set->fonts_cap) {
@@ -828,6 +992,46 @@ static tc_font *get_font(tc_font_set *set, face *fc, float size, int fake_bold, 
     return f;
 }
 
+/* A font that looks in prefer's families first for characters it lacks.
+   It shares its glyphs with the font that doesn't. */
+static tc_font *get_font_preferring(tc_font_set *set, face *fc, float size, int fake_bold, int fake_italic,
+                                    const char *const *prefer, uint32_t nprefer)
+{
+    tc_font *base = get_font(set, fc, size, fake_bold, fake_italic), *f;
+    uint32_t i, k;
+    if (!nprefer || !base)
+        return base;
+    for (i = 0; i < set->nfonts; i++) {
+        f = set->fonts[i];
+        if (f->base != base || f->nprefer != nprefer)
+            continue;
+        for (k = 0; k < nprefer && f->prefer[k] == prefer[k]; k++)
+            ;
+        if (k == nprefer)
+            return f;
+    }
+    if (set->nfonts == set->fonts_cap) {
+        uint32_t cap = set->fonts_cap * 2;
+        tc_font **grown = realloc(set->fonts, cap * sizeof *grown);
+        if (!grown)
+            return base;
+        set->fonts = grown;
+        set->fonts_cap = cap;
+    }
+    if (!(f = malloc(sizeof *f)))
+        return base;
+    *f = *base;
+    f->base = base;
+    f->glyphs = NULL;
+    f->glyphs_cap = f->nglyphs = 0;
+    memset(f->fallback, 0, sizeof f->fallback);
+    for (k = 0; k < nprefer; k++)
+        f->prefer[k] = prefer[k];
+    f->nprefer = nprefer;
+    set->fonts[set->nfonts++] = f;
+    return f;
+}
+
 static face *any_face(tc_font_set *set)
 {
     uint32_t i;
@@ -837,15 +1041,26 @@ static face *any_face(tc_font_set *set)
     return NULL;
 }
 
+/* The first family that's there: a page's web fonts first, which hide
+   installed families of the same name. A web family whose face has no
+   space in its unicode-range is passed over, as CSS's "first available
+   font" is; its characters come to it as fallbacks. */
 static face *choose(tc_font_set *set, const char *const *families, uint32_t count, int weight, int italic)
 {
     face *fc = NULL;
+    tc_font_set *s, *root = set;
     uint32_t i;
+    while (root->parent)
+        root = root->parent;
     for (i = 0; i < count && !fc; i++)
-        fc = find_family(set, families[i], weight, italic);
+        for (s = set; s && !fc; s = s->parent) {
+            fc = s->parent ? pick_face(s, families[i], weight, italic, 0) : find_family(s, families[i], weight, italic);
+            if (fc && !in_urange(fc, ' '))
+                fc = NULL;
+        }
     if (!fc)
-        fc = find_family(set, "serif", weight, italic);
-    return fc ? fc : any_face(set);
+        fc = find_family(root, "serif", weight, italic);
+    return fc ? fc : any_face(root);
 }
 
 const tc_font *tc_font_match(tc_font_set *set, const char *const *families, uint32_t count, int weight, int italic,
@@ -855,7 +1070,8 @@ const tc_font *tc_font_match(tc_font_set *set, const char *const *families, uint
     size_t len = 0;
     face *fc;
     const tc_font *result;
-    uint32_t i, slot, h = 2166136261u;
+    const char *prefer[MAX_PREFER];
+    uint32_t i, slot, nprefer, h = 2166136261u;
 
     if (!(size >= 0)) /* NaN too */
         size = 0;
@@ -887,7 +1103,16 @@ const tc_font *tc_font_match(tc_font_set *set, const char *const *families, uint
     fc = choose(set, families, count, weight, italic);
     while (fc && !load_face(fc))
         fc = choose(set, families, count, weight, italic);
-    result = get_font(set, fc, size, fc && weight >= 600 && fc->weight <= 500, fc && italic && !fc->italic);
+    /* The list's other web families, for the characters they have (CSS
+       looks for each character family by family). */
+    nprefer = 0;
+    for (i = 0; set->parent && fc && i < count && nprefer < MAX_PREFER; i++) {
+        face *web = pick_face(set, families[i], weight, italic, 0);
+        if (web && !ieq(web->family, fc->family))
+            prefer[nprefer++] = web->family;
+    }
+    result = get_font_preferring(set, fc, size, fc && weight >= 600 && fc->own_weight <= 500,
+                                 fc && italic && !fc->own_italic, prefer, nprefer);
     if (!result)
         result = get_font(set, NULL, size, 0, 0);
     if (result && len) {
@@ -912,6 +1137,17 @@ const tc_font *tc_font_match(tc_font_set *set, const char *const *families, uint
     return result;
 }
 
+int tc_font_set_has_family(tc_font_set *set, const char *family)
+{
+    tc_font_set *s;
+    int found = 0;
+    tc_mutex_lock(set->lock);
+    for (s = set; s && !found; s = s->parent)
+        found = (s->parent ? pick_face(s, family, 400, 0, 0) : find_family(s, family, 400, 0)) != NULL;
+    tc_mutex_unlock(set->lock);
+    return found;
+}
+
 const char *tc_font_family(const tc_font *font, int *fake_bold, int *fake_italic)
 {
     if (fake_bold)
@@ -933,7 +1169,7 @@ static int32_t glyph_id(tc_font *f, uint32_t cp)
     int32_t g;
     if (cp < 128 && f->ascii[cp] >= 0)
         return f->ascii[cp];
-    g = stbtt_FindGlyphIndex(&f->face->info, (int)cp);
+    g = in_urange(f->face, cp) ? glyph_index(&f->face->info, cp) : 0;
     if (cp < 128)
         f->ascii[cp] = g;
     return g;
@@ -976,6 +1212,13 @@ static glyph *find_glyph(tc_font *f, int32_t id)
     }
 }
 
+/* x leaned by y, within a short. */
+static stbtt_vertex_type lean(int x, int y)
+{
+    float v = x + y * ITALIC_SHEAR;
+    return (stbtt_vertex_type)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+}
+
 /* A glyph's outline, leaned for synthesised italics. */
 static int glyph_shape(tc_font *f, int32_t id, stbtt_vertex **v)
 {
@@ -983,9 +1226,9 @@ static int glyph_shape(tc_font *f, int32_t id, stbtt_vertex **v)
     if (f->fake_italic)
         for (i = 0; i < n; i++) {
             stbtt_vertex *p = &(*v)[i];
-            p->x = (stbtt_vertex_type)(p->x + p->y * ITALIC_SHEAR);
-            p->cx = (stbtt_vertex_type)(p->cx + p->cy * ITALIC_SHEAR);
-            p->cx1 = (stbtt_vertex_type)(p->cx1 + p->cy1 * ITALIC_SHEAR);
+            p->x = lean(p->x, p->y);
+            p->cx = lean(p->cx, p->cy);
+            p->cx1 = lean(p->cx1, p->cy1);
         }
     return n;
 }
@@ -1215,30 +1458,55 @@ static int ignorable(uint32_t cp)
            (cp >= 0x1BCA0 && cp <= 0x1BCA3) || (cp >= 0x1D173 && cp <= 0x1D17A) || (cp >= 0xE0000 && cp <= 0xE0FFF);
 }
 
-/* A font for a character f lacks, at its size and style: from the first
-   face in the set that has it (decision 36: Windows' fonts are added before
-   Tachyon's font pack), or NULL. With the set locked. */
+/* Whether a face has a character (and its unicode-range lets it). */
+static int face_has(face *f, uint32_t cp)
+{
+    return in_urange(f, cp) && face_coverage(f) && covers(f, cp);
+}
+
+/* The first face in s that has cp (only faces of family, or only faces of
+   other families, if either is given), as a font like f. */
+static tc_font *fallback_in(tc_font *f, tc_font_set *s, uint32_t cp, const char *family, const char *other)
+{
+    int weight = f->fake_bold ? 700 : f->face->own_weight, italic = f->face->own_italic || f->fake_italic;
+    uint32_t i;
+    for (i = 0; i < s->nfaces; i++) {
+        face *fc = s->faces[i], *best;
+        if (fc == f->face || fc->state == FACE_FAILED || (family && !ieq(fc->family, family)) ||
+            (other && ieq(fc->family, other)) || !face_has(fc, cp))
+            continue;
+        /* Its family's face nearest the style that has the character. */
+        best = pick_face(s, fc->family, weight, italic, cp);
+        if (!best || !load_face(best) || !glyph_index(&best->info, cp))
+            best = fc;
+        if (!load_face(best) || !glyph_index(&best->info, cp))
+            continue;
+        return get_font(f->set, best, f->size, weight >= 600 && best->own_weight <= 500, italic && !best->own_italic);
+    }
+    return NULL;
+}
+
+/* A font for a character f lacks, at its size and style, or NULL: the
+   first face in the set that has it (decision 36: Windows' fonts are added
+   before Tachyon's font pack). In a page's set, its family's other web
+   faces come first (unicode-range splits fonts into several), then the
+   web families its font-family named, and the page's other web fonts
+   last. With the set locked. */
 static tc_font *fallback_font(tc_font *f, uint32_t cp)
 {
-    tc_font_set *set = f->set;
-    uint32_t slot = cp % FALLBACK_CACHE, i;
-    int weight = f->fake_bold ? 700 : f->face->weight, italic = f->face->italic || f->fake_italic;
+    tc_font_set *s;
+    uint32_t slot = cp % FALLBACK_CACHE, k;
     tc_font *found = NULL;
     if (f->fallback[slot].cp == cp)
         return f->fallback[slot].font;
-    for (i = 0; i < set->nfaces && !found; i++) {
-        face *fc = set->faces[i], *best;
-        if (fc == f->face || fc->state == FACE_FAILED || !face_coverage(fc) || !covers(fc, cp))
-            continue;
-        /* Its family's face nearest the style, if that has the character too. */
-        best = pick_face(set, fc->family, weight, italic);
-        if (!best || !face_coverage(best) || !covers(best, cp) || !load_face(best) ||
-            !stbtt_FindGlyphIndex(&best->info, (int)cp))
-            best = fc;
-        if (!load_face(best) || !stbtt_FindGlyphIndex(&best->info, (int)cp))
-            continue;
-        found = get_font(set, best, f->size, weight >= 600 && best->weight <= 500, italic && !best->italic);
-    }
+    if (f->set->parent)
+        found = fallback_in(f, f->set, cp, f->face->family, NULL);
+    for (k = 0; k < f->nprefer && !found; k++)
+        found = fallback_in(f, f->set, cp, f->prefer[k], NULL);
+    for (s = f->set->parent ? f->set->parent : f->set; s && !found; s = s->parent)
+        found = fallback_in(f, s, cp, NULL, NULL);
+    if (!found && f->set->parent)
+        found = fallback_in(f, f->set, cp, NULL, f->face->family);
     f->fallback[slot].cp = cp;
     f->fallback[slot].font = found;
     return found;
@@ -1278,7 +1546,7 @@ static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float 
     while (i < len) {
         uint32_t cp;
         int32_t id;
-        tc_font *gf = f; /* the font this character comes from */
+        tc_font *gf = f, *store; /* the font this character comes from, and where its glyphs are */
         glyph *g;
         i += tc_utf8_decode(text + i, len - i, &cp);
         id = glyph_id(f, cp);
@@ -1295,16 +1563,17 @@ static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float 
         }
         if (gf == f && prev > 0 && id)
             pen += stbtt_GetGlyphKernAdvance(&f->face->info, prev, id) * f->scale;
-        g = find_glyph(gf, id);
+        store = gf->base ? gf->base : gf;
+        g = find_glyph(store, id);
         if (!g)
             break;
         if (s && !(fabsf(pen) < 1e8f))
             s = NULL; /* letter-spacing took the rest far off the surface */
         if (s && TC_ALPHA(color)) {
             if (!g->bitmap)
-                rasterise(gf, g);
+                rasterise(store, g);
             if (g->bitmap == &big_glyph)
-                draw_part(gf, g, s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, color);
+                draw_part(store, g, s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, color);
             else if (g->w)
                 blit(s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, g, color);
         }

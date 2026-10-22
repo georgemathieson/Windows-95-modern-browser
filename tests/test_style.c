@@ -790,6 +790,98 @@ static void test_sources(void)
     page_free(&p);
 }
 
+/* The page's @font-face rules for a viewport width. */
+static size_t faces(const page *p, float width, const tc_font_face ***out)
+{
+    tc_media_env env;
+    size_t n = 0;
+    env.width = env.device_width = width;
+    env.height = env.device_height = 600;
+    env.color_bits = 8;
+    TC_CHECK_INT(tc_style_font_faces(p->sources, p->count, &env, out, &n), TC_OK);
+    return n;
+}
+
+static void test_font_face(void)
+{
+    const tc_font_face **ff = NULL;
+    page p;
+    size_t n;
+    tc_stylesheet *imported;
+
+    page_load(&p, "<!DOCTYPE html><style>"
+                  "@font-face { font-family: 'My Font'; src: url(a.woff2) format('woff2'), url(b.ttf) format(truetype),"
+                  " url(c.eot) format('embedded-opentype'), local(Arial), url(d.svg#x) format(svg), url(e.otf)"
+                  " format(opentype) tech(color-COLRv1), url('f.woff2') format(woff2) tech(variations);"
+                  " font-weight: bold; font-style: italic;"
+                  " unicode-range: U+0-7F, U+4??, u+0025-00FF, U+A5, U+1e3; }"
+                  "@font-face { font-family: Open  Sans; src: url(x); src: url(y); font-weight: 300;"
+                  " font-weight: heavy; unicode-range: U+110000; font-style: oblique 10deg }"
+                  "@font-face { font-family: Variable; src: url(v); font-weight: 900 100; unicode-range: U+5-1 }"
+                  "@font-face { font-family: serif; src: url(s) }"
+                  "@font-face { src: url(no-family) }"
+                  "@font-face { font-family: NoSource; src: local(Arial) }"
+                  "@font-face extra { font-family: Prelude; src: url(p) }"
+                  "@media print { @font-face { font-family: Print; src: url(print) } }"
+                  "@media (min-width: 500px) { @font-face { font-family: Wide; src: url(wide) } }"
+                  "@import 'late.css';"
+                  "</style><style>@import 'fonts.css';</style>");
+    n = faces(&p, 800, &ff);
+    TC_CHECK_INT(n, 4);
+    if (n == 4) {
+        TC_CHECK_STR(ff[0]->family, "My Font");
+        TC_CHECK_INT(ff[0]->nurls, 3);
+        if (ff[0]->nurls == 3) {
+            TC_CHECK_STR(ff[0]->urls[0], "a.woff2");
+            TC_CHECK_STR(ff[0]->urls[1], "b.ttf");
+            TC_CHECK_STR(ff[0]->urls[2], "f.woff2");
+        }
+        TC_CHECK(ff[0]->base == NULL);
+        TC_CHECK_INT(ff[0]->weight_min, 700);
+        TC_CHECK_INT(ff[0]->weight_max, 700);
+        TC_CHECK_INT(ff[0]->italic, 1);
+        TC_CHECK_INT(ff[0]->nranges, 5);
+        if (ff[0]->nranges == 5) {
+            static const uint32_t want[] = { 0, 0x7F, 0x400, 0x4FF, 0x25, 0xFF, 0xA5, 0xA5, 0x1E3, 0x1E3 };
+            size_t i;
+            for (i = 0; i < TC_ARRAY_LEN(want); i++)
+                TC_CHECK_INT(ff[0]->ranges[i], want[i]);
+        }
+        TC_CHECK_STR(ff[1]->family, "Open Sans");
+        TC_CHECK_INT(ff[1]->nurls, 1);
+        TC_CHECK_STR(ff[1]->urls[0], "y");
+        TC_CHECK_INT(ff[1]->weight_min, 300); /* "heavy" isn't a weight */
+        TC_CHECK(ff[1]->ranges == NULL);      /* past the last code point */
+        TC_CHECK_INT(ff[1]->italic, 1);
+        TC_CHECK_STR(ff[2]->family, "Variable");
+        TC_CHECK_INT(ff[2]->weight_min, 100);
+        TC_CHECK_INT(ff[2]->weight_max, 900);
+        TC_CHECK(ff[2]->ranges == NULL);
+        TC_CHECK_INT(ff[2]->italic, 0);
+        TC_CHECK_STR(ff[3]->family, "Wide");
+    }
+    free((void *)ff);
+    TC_CHECK_INT(faces(&p, 400, &ff), 3); /* too narrow for Wide */
+    free((void *)ff);
+
+    /* In an imported sheet: relative to it. */
+    if (p.count == 2 && tc_stylesheet_import_count(p.sources[1].sheet) == 1) {
+        const char *css = "@font-face { font-family: Imported; src: url(i.woff) }";
+        imported = tc_stylesheet_parse(css, strlen(css), TC_ORIGIN_AUTHOR, 0, "http://example.com/css/fonts.css");
+        tc_stylesheet_set_import(p.sources[1].sheet, 0, imported);
+        n = faces(&p, 800, &ff);
+        TC_CHECK_INT(n, 5);
+        if (n == 5) {
+            TC_CHECK_STR(ff[4]->family, "Imported");
+            TC_CHECK_STR(ff[4]->base, "http://example.com/css/fonts.css");
+        }
+        free((void *)ff);
+    } else {
+        TC_CHECK(0);
+    }
+    page_free(&p);
+}
+
 void tc_suite_style(void)
 {
     tc_style_init();
@@ -813,4 +905,5 @@ void tc_suite_style(void)
     TC_RUN(test_sheets);
     TC_RUN(test_imports);
     TC_RUN(test_sources);
+    TC_RUN(test_font_face);
 }

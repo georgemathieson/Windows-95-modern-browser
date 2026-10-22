@@ -78,6 +78,7 @@ add_library(tachyon_core STATIC
   tc_fetch.c
   tc_fixup.c
   tc_font.c
+  tc_font_check.c
   tc_font_stb.c
   tc_html_parser.c
   tc_html_sniff.c
@@ -104,6 +105,7 @@ add_library(tachyon_core STATIC
   tc_url.c
   tc_url_host.c
   tc_utf8.c
+  tc_woff.c
   tc_wuffs.c
 )
 target_include_directories(tachyon_core PUBLIC

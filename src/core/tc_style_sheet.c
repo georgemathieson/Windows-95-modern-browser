@@ -302,6 +302,323 @@ static void import_rule(sp *p, const tc_css_rule *r, const tc_cond *cond)
     rule->import = s->nimports++;
 }
 
+/* ---- @font-face (CSS Fonts 4) ---- */
+
+#define MAX_FONT_SRCS   8
+#define MAX_URANGES     256
+
+/* The tokens of a value, whitespace left out. Returns how many, or
+   max + 1 if there are more. */
+static uint32_t words(const tc_css_value *v, uint32_t n, const tc_css_value **w, uint32_t max)
+{
+    uint32_t i, k = 0;
+    for (i = 0; i < n; i++)
+        if (v[i].type != TC_CSS_WHITESPACE) {
+            if (k == max)
+                return max + 1;
+            w[k++] = &v[i];
+        }
+    return k;
+}
+
+/* font-family: one name, quoted or as identifiers. */
+static const char *face_family(sp *p, const tc_css_value *v, uint32_t n)
+{
+    static const char *const reserved[] = {
+        "inherit", "initial", "unset", "revert", "revert-layer", "default", "serif", "sans-serif", "monospace",
+        "cursive", "fantasy", "system-ui", "math", "emoji", "fangsong",
+    };
+    const tc_css_value *w[16];
+    uint32_t count = words(v, n, w, 16), i;
+    size_t len = 0;
+    char *name;
+    if (count == 1 && w[0]->type == TC_CSS_STRING)
+        return w[0]->text[0] ? tc_arena_strndup(&p->sheet->arena, w[0]->text, strlen(w[0]->text)) : NULL;
+    if (!count || count > 16)
+        return NULL;
+    for (i = 0; i < count; i++) {
+        if (w[i]->type != TC_CSS_IDENT)
+            return NULL;
+        len += strlen(w[i]->text) + 1;
+    }
+    for (i = 0; count == 1 && i < TC_ARRAY_LEN(reserved); i++)
+        if (tc_css_ascii_ieq(w[0]->text, reserved[i]))
+            return NULL;
+    if (!(name = tc_arena_alloc(&p->sheet->arena, len)))
+        return NULL;
+    name[0] = '\0';
+    for (i = 0; i < count; i++) {
+        if (i)
+            strcat(name, " ");
+        strcat(name, w[i]->text);
+    }
+    return name;
+}
+
+/* A format() or tech() Tachyon reads: TrueType outlines, packed or not.
+   Variable fonts are drawn as their default instance. */
+static int face_format_ok(const tc_css_value *f)
+{
+    static const char *const formats[] = {
+        "truetype", "opentype", "woff", "woff2", "truetype-variations", "opentype-variations", "woff-variations",
+        "woff2-variations",
+    };
+    uint32_t i;
+    size_t k;
+    int any = 0;
+    for (i = 0; i < f->nitems; i++) {
+        const tc_css_value *a = &f->items[i];
+        if (a->type == TC_CSS_WHITESPACE || a->type == TC_CSS_COMMA)
+            continue;
+        if (a->type != TC_CSS_STRING && a->type != TC_CSS_IDENT)
+            return 0;
+        if (tc_css_ascii_ieq(f->text, "tech")) {
+            if (!tc_css_ascii_ieq(a->text, "variations"))
+                return 0; /* every technology must be one Tachyon has */
+            any = 1;
+            continue;
+        }
+        for (k = 0; k < TC_ARRAY_LEN(formats); k++)
+            any |= tc_css_ascii_ieq(a->text, formats[k]);
+    }
+    return any;
+}
+
+/* src: the url()s in a format Tachyon reads, in order. local() is passed
+   over: Windows 95 won't have the font. Entries that don't parse are
+   dropped, as CSS Fonts 4 says. */
+static int face_src(sp *p, const tc_css_value *v, uint32_t n, tc_font_face *ff)
+{
+    const char *urls[MAX_FONT_SRCS], **copy;
+    uint32_t i = 0, count = 0, k;
+    while (i < n) {
+        uint32_t end = i, at;
+        const char *url = NULL;
+        int ok = 1;
+        while (end < n && v[end].type != TC_CSS_COMMA)
+            end++;
+        at = skip_ws(v, end, i);
+        if (at < end && v[at].type == TC_CSS_URL) {
+            url = v[at].text;
+        } else if (at < end && v[at].type == TC_CSS_FUNCTION && tc_css_ascii_ieq(v[at].text, "url")) {
+            uint32_t q = skip_ws(v[at].items, v[at].nitems, 0);
+            if (q < v[at].nitems && v[at].items[q].type == TC_CSS_STRING)
+                url = v[at].items[q].text;
+        }
+        for (at = skip_ws(v, end, at + 1); url && at < end; at = skip_ws(v, end, at + 1))
+            if (v[at].type != TC_CSS_FUNCTION ||
+                !(tc_css_ascii_ieq(v[at].text, "format") || tc_css_ascii_ieq(v[at].text, "tech")) ||
+                !face_format_ok(&v[at]))
+                ok = 0;
+        if (url && ok && *url && count < MAX_FONT_SRCS)
+            urls[count++] = url;
+        i = end + 1;
+    }
+    if (!count || !(copy = tc_arena_alloc(&p->sheet->arena, count * sizeof *copy)))
+        return 0;
+    for (k = 0; k < count; k++)
+        if (!(copy[k] = tc_arena_strndup(&p->sheet->arena, urls[k], strlen(urls[k]))))
+            return 0;
+    ff->urls = copy;
+    ff->nurls = count;
+    return 1;
+}
+
+static int face_weight_value(const tc_css_value *w, int *out)
+{
+    if (tc_css_is_ident(w, "normal"))
+        *out = 400;
+    else if (tc_css_is_ident(w, "bold"))
+        *out = 700;
+    else if (w->type == TC_CSS_NUMBER && w->number >= 1 && w->number <= 1000)
+        *out = (int)(w->number + 0.5);
+    else
+        return 0;
+    return 1;
+}
+
+/* font-weight: auto, a weight, or a variable font's range. */
+static int face_weight(const tc_css_value *v, uint32_t n, tc_font_face *ff)
+{
+    const tc_css_value *w[3];
+    uint32_t count = words(v, n, w, 2);
+    int a, b;
+    if (count == 1 && tc_css_is_ident(w[0], "auto")) {
+        ff->weight_min = ff->weight_max = 400;
+        return 1;
+    }
+    if (count < 1 || count > 2 || !face_weight_value(w[0], &a) || (count == 2 && !face_weight_value(w[1], &b)))
+        return 0;
+    if (count == 1)
+        b = a;
+    ff->weight_min = (uint16_t)TC_MIN(a, b); /* a range written backwards is turned round */
+    ff->weight_max = (uint16_t)TC_MAX(a, b);
+    return 1;
+}
+
+/* font-style: italic and oblique are both italic here. */
+static int face_style(const tc_css_value *v, uint32_t n, tc_font_face *ff)
+{
+    const tc_css_value *w[4];
+    uint32_t count = words(v, n, w, 3);
+    if (count == 1 && (tc_css_is_ident(w[0], "normal") || tc_css_is_ident(w[0], "auto")))
+        ff->italic = 0;
+    else if (count == 1 && tc_css_is_ident(w[0], "italic"))
+        ff->italic = 1;
+    else if (count >= 1 && count <= 3 && tc_css_is_ident(w[0], "oblique"))
+        ff->italic = 1;
+    else
+        return 0;
+    return 1;
+}
+
+static int hex_digit(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* One <urange>, from its tokens' text as written (CSS Syntax 3's
+   "consume the value of a unicode-range descriptor"). */
+static int urange_text(const char *t, uint32_t *first, uint32_t *last)
+{
+    uint32_t a = 0, b = 0;
+    int digits = 0, marks = 0;
+    if ((t[0] != 'u' && t[0] != 'U') || t[1] != '+')
+        return 0;
+    t += 2;
+    for (; hex_digit(*t) >= 0 && digits < 6; t++, digits++)
+        a = a << 4 | (uint32_t)hex_digit(*t);
+    for (; *t == '?' && digits + marks < 6; t++, marks++)
+        ;
+    if (!digits && !marks)
+        return 0;
+    if (marks) {
+        if (*t)
+            return 0;
+        b = (a << 4 * marks) | ((1u << 4 * marks) - 1);
+        a <<= 4 * marks;
+    } else if (*t == '-') {
+        for (t++, digits = 0; hex_digit(*t) >= 0 && digits < 6; t++, digits++)
+            b = b << 4 | (uint32_t)hex_digit(*t);
+        if (!digits || *t)
+            return 0;
+    } else if (*t) {
+        return 0;
+    } else {
+        b = a;
+    }
+    if (b > 0x10FFFF || a > b)
+        return 0;
+    *first = a;
+    *last = b;
+    return 1;
+}
+
+/* unicode-range: a list of <urange>, each written as tokens without
+   whitespace inside (U+0-7F tokenises as an identifier, a number and a
+   dimension). */
+static int face_ranges(sp *p, const tc_css_value *v, uint32_t n, tc_font_face *ff)
+{
+    uint32_t pairs[2 * MAX_URANGES], count = 0, i = 0, *copy;
+    while (i < n) {
+        char text[64];
+        size_t len = 0;
+        uint32_t end = i, a, b;
+        while (end < n && v[end].type != TC_CSS_COMMA)
+            end++;
+        while (i < end && v[i].type == TC_CSS_WHITESPACE)
+            i++;
+        while (end > i && v[end - 1].type == TC_CSS_WHITESPACE)
+            end--;
+        for (; i < end; i++) {
+            const char *part = "";
+            char one[2] = { 0, 0 };
+            size_t k;
+            if (v[i].type == TC_CSS_IDENT)
+                part = v[i].text;
+            else if (v[i].type == TC_CSS_NUMBER || v[i].type == TC_CSS_DIMENSION)
+                part = v[i].repr;
+            else if (v[i].type == TC_CSS_DELIM && (v[i].cp == '+' || v[i].cp == '?'))
+                one[0] = (char)v[i].cp, part = one;
+            else
+                return 0;
+            k = strlen(part);
+            if (v[i].type == TC_CSS_DIMENSION && len + k < sizeof text)
+                k += strlen(v[i].text);
+            if (len + k >= sizeof text)
+                return 0;
+            memcpy(text + len, part, strlen(part));
+            if (v[i].type == TC_CSS_DIMENSION)
+                memcpy(text + len + strlen(part), v[i].text, strlen(v[i].text));
+            len += k;
+        }
+        text[len] = '\0';
+        if (!urange_text(text, &a, &b))
+            return 0;
+        if (count < MAX_URANGES) {
+            pairs[2 * count] = a;
+            pairs[2 * count + 1] = b;
+            count++;
+        }
+        while (i < n && v[i].type != TC_CSS_COMMA)
+            i++;
+        i++;
+    }
+    if (!count || !(copy = tc_arena_alloc(&p->sheet->arena, 2 * count * sizeof *copy)))
+        return 0;
+    memcpy(copy, pairs, 2 * count * sizeof *copy);
+    ff->ranges = copy;
+    ff->nranges = count;
+    return 1;
+}
+
+static void font_face_rule(sp *p, const tc_css_rule *r, const tc_cond *cond, int32_t layer)
+{
+    tc_font_face *ff;
+    tc_css_item *items;
+    tc_rule *rule;
+    uint32_t count, i;
+
+    if (!r->block || skip_ws(r->prelude, r->nprelude, 0) != r->nprelude)
+        return;
+    if (tc_css_parse_block(p->tmp, r->block->items, r->block->nitems, &items, &count) != TC_OK ||
+        !(ff = tc_arena_alloc(&p->sheet->arena, sizeof *ff))) {
+        p->nomem = 1;
+        return;
+    }
+    memset(ff, 0, sizeof *ff);
+    ff->weight_min = ff->weight_max = 400;
+    ff->base = p->sheet->url;
+    /* A descriptor that doesn't parse is ignored; the last that does wins. */
+    for (i = 0; i < count; i++) {
+        const tc_css_decl *d = &items[i].decl;
+        tc_font_face tmp = *ff;
+        if (items[i].type != TC_CSS_ITEM_DECL)
+            continue;
+        if (tc_css_ascii_ieq(d->name, "font-family")) {
+            if ((tmp.family = face_family(p, d->value, d->nvalue)) != NULL)
+                *ff = tmp;
+        } else if (tc_css_ascii_ieq(d->name, "src")) {
+            if (face_src(p, d->value, d->nvalue, &tmp))
+                *ff = tmp;
+        } else if (tc_css_ascii_ieq(d->name, "font-weight")) {
+            if (face_weight(d->value, d->nvalue, &tmp))
+                *ff = tmp;
+        } else if (tc_css_ascii_ieq(d->name, "font-style")) {
+            if (face_style(d->value, d->nvalue, &tmp))
+                *ff = tmp;
+        } else if (tc_css_ascii_ieq(d->name, "unicode-range")) {
+            if (face_ranges(p, d->value, d->nvalue, &tmp))
+                *ff = tmp;
+        }
+    }
+    if (!ff->family || !ff->nurls)
+        return; /* both are needed */
+    if (!(rule = new_rule(p, RULE_FONT_FACE, cond, layer)))
+        return;
+    rule->face = ff;
+}
+
 /* One rule of a rule list (the top level, or inside @media and friends). */
 static void one_rule(sp *p, const tc_css_rule *r, const tc_cond *cond, int32_t layer, int depth)
 {
@@ -352,9 +669,11 @@ static void one_rule(sp *p, const tc_css_rule *r, const tc_cond *cond, int32_t l
     } else if (tc_css_ascii_ieq(name, "supports")) {
         if (supports_condition(p, r->prelude, r->nprelude, 0))
             rule_list(p, r->block->items, r->block->nitems, cond, layer, depth + 1);
+    } else if (tc_css_ascii_ieq(name, "font-face")) {
+        font_face_rule(p, r, cond, layer);
     }
-    /* Everything else (@font-face, @keyframes, @page, @container, @scope,
-       @property, @counter-style...) Tachyon doesn't use yet. */
+    /* Everything else (@keyframes, @page, @container, @scope, @property,
+       @counter-style...) Tachyon doesn't use yet. */
 }
 
 /* The rules in a block (declarations there are invalid and dropped). */

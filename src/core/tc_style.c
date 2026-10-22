@@ -2309,6 +2309,62 @@ int tc_style_document(const tc_document *doc, const tc_style_source *sources, si
     return TC_OK;
 }
 
+/* ---- @font-face ---- */
+
+typedef struct face_list {
+    const tc_font_face **items;
+    size_t n, cap;
+} face_list;
+
+static void collect_faces(styler *st, const tc_stylesheet *sheet, face_list *list, int depth)
+{
+    uint32_t i;
+    for (i = 0; i < sheet->nrules && !st->nomem; i++) {
+        const tc_rule *r = &sheet->rules[i];
+        if (!cond_matches(st, r->cond))
+            continue;
+        if (r->kind == RULE_IMPORT && sheet->imports[r->import].sheet && depth < 8) {
+            collect_faces(st, sheet->imports[r->import].sheet, list, depth + 1);
+        } else if (r->kind == RULE_FONT_FACE) {
+            if (list->n == list->cap) {
+                size_t cap = list->cap ? list->cap * 2 : 8;
+                const tc_font_face **grown = realloc((void *)list->items, cap * sizeof *grown);
+                if (!grown) {
+                    st->nomem = 1;
+                    return;
+                }
+                list->items = grown;
+                list->cap = cap;
+            }
+            list->items[list->n++] = r->face;
+        }
+    }
+}
+
+int tc_style_font_faces(const tc_style_source *sources, size_t count, const tc_media_env *env,
+                        const tc_font_face ***out, size_t *n)
+{
+    styler st;
+    face_list list = { NULL, 0, 0 };
+    size_t k;
+    memset(&st, 0, sizeof st);
+    st.env = env;
+    tc_arena_init(&st.tmp);
+    for (k = 0; k < count && !st.nomem; k++)
+        if (source_applies(&st, &sources[k]))
+            collect_faces(&st, sources[k].sheet, &list, 0);
+    tc_arena_free(&st.tmp);
+    if (st.nomem) {
+        free((void *)list.items);
+        *out = NULL;
+        *n = 0;
+        return TC_ERR_NOMEM;
+    }
+    *out = list.items;
+    *n = list.n;
+    return TC_OK;
+}
+
 void tc_styled_free(tc_styled *s)
 {
     if (!s)

@@ -288,6 +288,27 @@ void tc_style_anonymous(tc_style *out, const tc_style *parent, int display);
 /* Every property's initial value. */
 void tc_style_initial(tc_style *out);
 
+/* ---- Web fonts ---- */
+
+/* An @font-face rule (CSS Fonts 4): where a family's face comes from, and
+   what it's matched by. */
+typedef struct tc_font_face {
+    const char *family;
+    const char *const *urls;    /* src's url()s, in order: those whose format() Tachyon reads (local() isn't) */
+    uint32_t nurls;
+    const char *base;           /* the style sheet's URL they're relative to; NULL for the document's */
+    uint16_t weight_min, weight_max; /* font-weight: a weight, or a variable font's range */
+    uint8_t italic;             /* font-style: italic or oblique */
+    const uint32_t *ranges;     /* unicode-range: first, last, first, last...; NULL for every character */
+    uint32_t nranges;
+} tc_font_face;
+
+/* The @font-face rules in force for a viewport, in the order the sheets
+   give them: pointers into the sheets, in *out (malloc'd; free it with
+   free()). */
+int tc_style_font_faces(const tc_style_source *sources, size_t count, const tc_media_env *env,
+                        const tc_font_face ***out, size_t *n);
+
 /* Statistics: elements styled, selectors in the cascade, selector tests
    and matches, distinct computed styles, bytes used. */
 typedef struct tc_style_stats {

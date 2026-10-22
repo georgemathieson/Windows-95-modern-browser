@@ -56,3 +56,5 @@
 == font-fallback.html font-fallback-ref.html
 == cjk-line-break.html cjk-line-break-ref.html
 == svg-shapes.html svg-shapes-ref.html
+== font-face.html font-face-ref.html
+== font-face-range.html font-face-range-ref.html

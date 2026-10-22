@@ -183,7 +183,12 @@ static void on_image(shell *sh, WPARAM slot, tw_images *job)
         tc_image_free(tw_images_take(job, slot));
         return;
     }
-    tw_view_image_arrived(sh->view, tw_images_index(job, slot), tw_images_take(job, slot));
+    if (tw_images_is_font(job, slot)) {
+        const tc_buf *font = tw_images_font(job, slot);
+        tw_view_font_arrived(sh->view, tw_images_index(job, slot), font ? font->data : NULL, font ? font->len : 0);
+    } else {
+        tw_view_image_arrived(sh->view, tw_images_index(job, slot), tw_images_take(job, slot));
+    }
     tw_images_progress(job, &done, &total);
     if (done < total) {
         char text[100];
@@ -192,14 +197,32 @@ static void on_image(shell *sh, WPARAM slot, tw_images *job)
     }
 }
 
+/* Whether the shown page waits for a font: one whose src failed waits for
+   its next. */
+static int fonts_waiting(shell *sh)
+{
+    const tc_page *page = tw_view_page(sh->view);
+    size_t i;
+    for (i = 0; page && i < tc_page_font_count(page); i++)
+        if (tc_page_font_state(page, i) == TC_PAGE_FONT_WAITING)
+            return 1;
+    return 0;
+}
+
 static void on_images_done(shell *sh, tw_images *job)
 {
-    if (job == sh->images) {
-        sh->images = NULL;
+    int cancelled = job != sh->images;
+    tw_images_free(job);
+    if (cancelled)
+        return;
+    sh->images = NULL;
+    /* Each src is tried once, so this ends. */
+    if (fonts_waiting(sh))
+        start_images(sh);
+    if (!sh->images) {
         set_status(sh, sh->done_status);
         update_nav_state(sh);
     }
-    tw_images_free(job);
 }
 
 /* ---- Showing the current history entry ---- */

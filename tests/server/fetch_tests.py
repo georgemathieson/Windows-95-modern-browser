@@ -58,6 +58,13 @@ STYLED = (b'<!DOCTYPE html><title>Styled</title><link rel="stylesheet" href="sty
 PICTURES = (b'<!DOCTYPE html><title>Pictures</title><style>body { background: url(/dot.png) }</style>'
             b'<p><img src="/dot.png" alt="a dot"> <img srcset="/missing.png 1x" alt="missing">'
             b' <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=" alt="inline">')
+# A web font, in WOFF2: the first src is missing, and the second face's
+# range isn't used, so one font is fetched after one failure.
+WEBFONT = (b'<!DOCTYPE html><meta charset=utf-8><style>'
+           b'@font-face { font-family: Web; src: url(/missing.woff2), url(/font.woff2) format("woff2") }'
+           b'@font-face { font-family: Web; src: url(/cyrillic.woff2); unicode-range: U+400-4FF }'
+           b'p { font-family: Web, sans-serif }</style><p>\xe4\xb8\xad\xe6\x97\xa5')
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "fonts")
 
 
 def tiny_png():
@@ -136,6 +143,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.reply(200, LONG, [("Content-Type", "text/html; charset=utf-8")])
         elif path == "/pictures":
             self.reply(200, PICTURES, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/webfont":
+            self.reply(200, WEBFONT, [("Content-Type", "text/html; charset=utf-8")])
+        elif path == "/font.woff2":
+            with open(os.path.join(FONT_DIR, "tachyon-test-cjk.woff2"), "rb") as f:
+                self.reply(200, f.read(), [("Content-Type", "font/woff2")])
         elif path == "/dot.png":
             self.reply(200, tiny_png(), [("Content-Type", "image/png")])
         elif path == "/style.css":
@@ -297,6 +309,8 @@ def main():
          ["2 style sheets (1 failed)", "rendered 800x", "1 connections opened, 3 reused"]),
         ("pictures", ["--render", url(http_port, "/pictures", "http")], True, [],
          ["3 images (1 failed)", "1 connections opened, 2 reused"]),
+        ("web fonts", ["--render", url(http_port, "/webfont", "http")], True, [],
+         ["font 2: http://localhost:%d/font.woff2" % http_port, "1 web fonts (0 failed)"]),
         ("document tree", ["--dom", url(http_port, "/page", "http")], True,
          ["| <!DOCTYPE html>", '|       "Caf\u00e9 cr\u00e8me & caf\u00e9 au lait\u00a0\u20ac5', "|     <svg svg>",
           '|       viewBox="0 0 10 10"', "|     <template>", "|       content", '|     "stray text"'],
