@@ -7,17 +7,32 @@ HTML5, modern JavaScript and TLS 1.3, running natively on Windows 95 with
 nothing else installed. A tachyon is a hypothetical particle that travels
 backwards in time.
 
-![Tachyon under Wine showing a demo encyclopedia article, styled by its style sheet and set in TrueType fonts](docs/images/sprint-3-article.png)
+![Tachyon under Wine showing a demo encyclopedia article with an SVG logo, a headline in a web font, a JPEG picture and a paragraph in Japanese](docs/images/sprint-4-article.png)
 
 ## Status
 
-**Sprint 3: First Light.** Tachyon draws pages. It fetches them over HTTP
-and HTTPS (TLS 1.2 and 1.3), parses them the way today's browsers do, loads
-their style sheets, and lays out and paints them with its own engine, in the
-TrueType fonts Windows 95 already has. Links work, and the document tree and
-source are a menu away. Tables, floats and positioned boxes are laid out as
-plain blocks until Sprint 7, images are placeholders until Sprint 4, and
-scripts don't run until Sprint 5.
+**Sprint 4: Images and fonts** (in progress). Tachyon draws pages with their
+pictures, and text in every script written one character after another. It
+fetches pages over HTTP and HTTPS (TLS 1.2 and 1.3), parses them the way
+today's browsers do, loads their style sheets, pictures and web fonts, and
+lays out and paints them with its own engine. Links work, and the document
+tree and source are a menu away. Tables, floats and positioned boxes are
+laid out as plain blocks until Sprint 7, and scripts don't run until
+Sprint 5.
+
+- Pictures: PNG, JPEG, GIF (animated too), BMP, WebP and ICO, decoded by
+  Wuffs, and SVG by NanoSVG, in `<img>` (with `srcset` and `<picture>`),
+  CSS backgrounds and gradients, and inline `<svg>`. They load after the
+  page appears, those in view first, within a memory budget. On a
+  256-colour display pages are dithered to a palette of Tachyon's own.
+- Text in other scripts: a character a font lacks comes from Windows' other
+  fonts, then from an optional font pack (DejaVu Sans and WenQuanYi Micro
+  Hei) on the CD and in the zip. Chinese, Japanese and Korean pages in their
+  old encodings (Shift_JIS, EUC-JP, GBK, Big5, EUC-KR and the rest) decode.
+- Web fonts: `@font-face` with TrueType, WOFF and WOFF2, `unicode-range`,
+  weights and styles, fetched only when the page's text needs them. Every
+  downloaded font is checked by Tachyon's own code before the font
+  rasteriser reads it.
 
 - CSS written from today's specifications: the syntax (it passes
   css-parsing-tests, apart from a listed few where the tests predate the
@@ -32,15 +47,17 @@ scripts don't run until Sprint 5.
 - Text rasterised by stb_truetype from Windows 95's own fonts (Arial, Times
   New Roman, Courier New and the rest), with kerning and synthetic bold and
   italic.
-- Style sheets load over kept-alive connections, with a small cache.
+- Style sheets, pictures and fonts load over kept-alive connections, with a
+  small cache.
 - An HTML parser written from the October 2026 HTML Standard: it passes
   all 7,049 html5lib tokenizer cases and 3,890 of web-platform-tests' 3,898
-  tree-construction cases. The parser and the renderer both survive fuzzing
-  under AddressSanitizer.
-- The WHATWG Encoding Standard's encodings (UTF-8, UTF-16 and every
-  single-byte one) and its rules for finding a page's encoding.
+  tree-construction cases. The parser, the renderer, the image decoders and
+  the font code all survive fuzzing under AddressSanitizer.
+- Every encoding in the WHATWG Encoding Standard, and its rules for finding
+  a page's encoding.
 - A WHATWG URL parser that passes all 896 web-platform-tests URL cases.
-- HTTP/1.1 with chunked bodies, redirects, gzip and deflate, and HTTP proxies.
+- HTTP/1.1 with chunked bodies, redirects, gzip, deflate and Brotli, and HTTP
+  proxies.
 - Mbed TLS 4.1 LTS with its own entropy pool, because Windows 95 has no
   reliable random number source.
 - `FETCH.EXE`, the same network stack, parser and renderer on the command
@@ -114,9 +131,9 @@ tools/fuzz.sh 600 && tools/fuzz.sh 600 1 render
   and css-parsing-tests run as unit tests natively and under Wine, and
   reference tests compare rendered pages pixel for pixel.
 - We write the engine (URL, HTTP, HTML, DOM, CSS, layout, painting) and borrow
-  the parts nobody should write alone: Mbed TLS for TLS, zlib for
-  decompression, stb_truetype for fonts, and (from Sprint 5) QuickJS-ng for
-  JavaScript. Third-party
+  the parts nobody should write alone: Mbed TLS for TLS, zlib and Brotli
+  for decompression, Wuffs and NanoSVG for pictures, stb_truetype for
+  fonts, and (from Sprint 5) QuickJS-ng for JavaScript. Third-party
   code lives in `third_party/` with notes on its version and changes.
 
 More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

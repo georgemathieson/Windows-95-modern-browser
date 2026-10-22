@@ -54,7 +54,7 @@ jobs:
             dist/*.txt
 
   fuzz:
-    name: Fuzz the HTML parser and the renderer (libFuzzer, ASan, UBSan)
+    name: Fuzz the HTML parser, the renderer, pictures and fonts (libFuzzer, ASan, UBSan)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +66,10 @@ jobs:
         run: tools/fuzz.sh 120 2 html
       - name: Fuzz CSS, styles, layout and painting for three minutes
         run: tools/fuzz.sh 180 2 render
+      - name: Fuzz the picture decoders for two minutes
+        run: tools/fuzz.sh 120 2 image
+      - name: Fuzz web fonts (WOFF, WOFF2, the font checker, stb_truetype) for two minutes
+        run: tools/fuzz.sh 120 2 font
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

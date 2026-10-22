@@ -125,7 +125,10 @@ feature, and give pages `<meta charset="utf-8">`. Layout's unit tests
 
 After changing CSS parsing, styles, layout or painting, run
 `tools/fuzz.sh SECONDS JOBS render`, which feeds pages and style sheets
-through the whole pipeline.
+through the whole pipeline. The `image` target fuzzes the picture decoders
+(`tc_image`, `tc_svg`), and `font` the web font code (`tc_woff`,
+`tc_font_check` and stb_truetype behind them): run those after changing
+them. Fuzz one target at a time, as they share `build/fuzz`'s logs.
 
 ### Crash reports
 
