@@ -597,8 +597,10 @@ const tc_font *tc_font_match(tc_font_set *set, const char *const *families, uint
     const tc_font *result;
     uint32_t i, slot, h = 2166136261u;
 
-    if (size < 0)
+    if (!(size >= 0)) /* NaN too */
         size = 0;
+    if (size > 100000)
+        size = 100000;
     size = (float)floor(size * 16 + 0.5f) / 16; /* a sixteenth of a pixel is close enough */
     /* Remembered by the names, weight, style and size. */
     for (i = 0; i < count; i++) {
@@ -837,6 +839,8 @@ static float box_text(const tc_font *f, tc_surface *s, tc_rect clip, float x, fl
     while (i < len) {
         uint32_t cp;
         i += tc_utf8_decode(text + i, len - i, &cp);
+        if (s && !(fabsf(pen) < 1e8f))
+            s = NULL; /* letter-spacing took the rest far off the surface */
         if (s && cp > ' ' && f->size >= 4) {
             int bx = (int)(pen + 1), by = (int)(y - 0.7f * f->size), bw = (int)(adv - 2), bh = (int)(0.7f * f->size);
             tc_surface_fill(s, tc_rect_intersect(clip, tc_rect_make(bx, by, bw, 1)), color);
@@ -856,9 +860,13 @@ static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float 
     tc_font *f = (tc_font *)cf;
     float pen = x;
     int32_t prev = -1;
-    int baseline = (int)floor(y + 0.5f);
+    int baseline = 0;
     size_t i = 0;
 
+    if (!(fabsf(x) < 1e8f && fabsf(y) < 1e8f))
+        s = NULL; /* far off the surface (or NaN): measure only */
+    else
+        baseline = (int)floor(y + 0.5f);
     if (!f->set || f->size <= 0)
         return 0;
     if (!f->face)
@@ -875,6 +883,8 @@ static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float 
         g = find_glyph(f, id);
         if (!g)
             break;
+        if (s && !(fabsf(pen) < 1e8f))
+            s = NULL; /* letter-spacing took the rest far off the surface */
         if (s && TC_ALPHA(color)) {
             if (!g->bitmap)
                 rasterise(f, g);

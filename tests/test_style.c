@@ -439,6 +439,29 @@ static void test_nesting(void)
     CHECK_COLOR(style(&p, "card2")->color, 0xFF008000);
     CHECK_COLOR(style(&p, "after")->color, 0xFF0000FF);
     page_free(&p);
+
+    /* An empty selector, or an empty item in a list, makes a nested rule invalid. */
+    page_load(&p, "<!DOCTYPE html><style>"
+                  "div { color: red; { color: blue } p, , i { color: blue } }"
+                  "</style><div id=div><p id=p>p</p></div>");
+    CHECK_COLOR(style(&p, "div")->color, 0xFFFF0000);
+    CHECK_COLOR(style(&p, "p")->color, 0xFFFF0000);
+    page_free(&p);
+}
+
+static void test_huge_font_sizes(void)
+{
+    page p;
+    page_load(&p, "<!DOCTYPE html><style>#a { font-size: 1e30px } #b { font-size: 1e30em } #c { font-size: 100em }"
+                  "</style><div id=a><div id=b><div id=c><small id=d>x</small></div></div></div>"
+                  "<div style='font-size: xx-large'><div style='font-size: 1e38em'><div id=e "
+                  "style='font-size: 1e38em'>x</div></div></div>");
+    CHECK_PX(style(&p, "a")->font_size, 10000);
+    CHECK_PX(style(&p, "b")->font_size, 10000);
+    CHECK_PX(style(&p, "c")->font_size, 10000);
+    CHECK_PX(style(&p, "d")->font_size, 10000 / 1.2);
+    CHECK_PX(style(&p, "e")->font_size, 10000);
+    page_free(&p);
 }
 
 static void test_revert_and_all(void)
@@ -664,6 +687,7 @@ void tc_suite_style(void)
     TC_RUN(test_media_and_supports);
     TC_RUN(test_layers);
     TC_RUN(test_nesting);
+    TC_RUN(test_huge_font_sizes);
     TC_RUN(test_revert_and_all);
     TC_RUN(test_blockify);
     TC_RUN(test_hints);

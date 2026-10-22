@@ -657,7 +657,7 @@ static int parse_list(parser *outer, const tc_css_value *v, uint32_t n, int forg
         if (i < n && v[i].type != TC_CSS_COMMA)
             continue;
         p.arena = outer->arena;
-        p.v = v + start;
+        p.v = v ? v + start : NULL; /* an empty prelude has no values */
         p.n = i - start;
         p.i = 0;
         p.depth = outer->depth;

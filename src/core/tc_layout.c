@@ -1369,8 +1369,10 @@ int tc_layout_document(const tc_document *doc, const tc_styled *styled, tc_font_
         l->root->h = TC_MAX(l->root->h, html->y + html->h + html->margin[BOTTOM]);
         add_ink(l->root, 0, 0, l->root->w, l->root->h);
     }
-    l->doc_w = TC_MAX(w, l->root->ink[2]);
-    l->doc_h = TC_MAX(h, TC_MAX(l->root->h, l->root->ink[3]));
+    /* Each length is bounded, but many add up: keep the document's size to
+       something its viewers can turn into ints. */
+    l->doc_w = TC_MIN(TC_MAX(w, l->root->ink[2]), 1e8f);
+    l->doc_h = TC_MIN(TC_MAX(h, TC_MAX(l->root->h, l->root->ink[3])), 1e8f);
     l->stats.bytes = l->arena.total;
     if (l->nomem) {
         tc_layout_free(l);

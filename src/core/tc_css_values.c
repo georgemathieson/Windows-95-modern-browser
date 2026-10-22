@@ -499,11 +499,18 @@ int tc_calc_compute(tc_arena *a, const tc_calc *c, const tc_length_basis *b, tc_
     return out->expr ? TC_OK : TC_ERR_NOMEM;
 }
 
+float tc_length_clamp(float v)
+{
+    if (v != v)
+        return 0;
+    return v > TC_LENGTH_MAX ? TC_LENGTH_MAX : v < -TC_LENGTH_MAX ? -TC_LENGTH_MAX : v;
+}
+
 float tc_length_resolve(const tc_length *len, float basis)
 {
     if (len->expr)
-        return evaluate(len->expr, basis);
-    return len->px + len->pct * basis / 100;
+        return tc_length_clamp(evaluate(len->expr, basis));
+    return tc_length_clamp(len->px + len->pct * basis / 100);
 }
 
 /* ---- Media queries (Media Queries 4) ---- */

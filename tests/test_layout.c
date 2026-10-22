@@ -345,6 +345,31 @@ static void test_deep_and_odd_documents(void)
     laid_free(&l);
 }
 
+/* Lengths a page can't mean: everything stays finite and paintable. */
+static void test_absurd_lengths(void)
+{
+    laid l;
+    tc_surface s;
+    float w, h;
+    LAY_OUT(&l,
+            "<div id=a style='height: 5e52px; width: 1e30%'></div>"
+            "<div id=b style='margin-left: -1e38px; padding: calc(1e38px * 1e38)'>x</div>"
+            "<p style='font-size: 1e30px; line-height: 1e30'>big</p>"
+            "<p style='letter-spacing: -1e30px; word-spacing: 1e30px'>spaced out text</p>"
+            "<span style='display: inline-block; width: 3e38px; vertical-align: 1e38%'>x</span>",
+            400);
+    CHECK_PX(box_of(&l, "a")->h, TC_LENGTH_MAX);
+    TC_CHECK(box_of(&l, "b")->x >= -TC_LENGTH_MAX);
+    tc_layout_size(l.layout, &w, &h);
+    TC_CHECK(w >= 400 && w <= 1e8f && h >= 300 && h <= 1e8f);
+    TC_CHECK_INT(tc_surface_init(&s, 50, 50), TC_OK);
+    tc_paint(l.layout, &s, tc_rect_make(0, 0, 50, 50), 0, 0);
+    tc_paint(l.layout, &s, tc_rect_make(0, 0, 50, 50), w - 50, h - 50);
+    tc_paint(l.layout, &s, tc_rect_make(0, 0, 50, 50), 0, TC_LENGTH_MAX);
+    tc_surface_free(&s);
+    laid_free(&l);
+}
+
 void tc_suite_layout(void)
 {
     TC_RUN(test_block_box_model);
@@ -354,4 +379,5 @@ void tc_suite_layout(void)
     TC_RUN(test_hit_testing_and_size);
     TC_RUN(test_painting);
     TC_RUN(test_deep_and_odd_documents);
+    TC_RUN(test_absurd_lengths);
 }

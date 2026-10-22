@@ -16,8 +16,14 @@ typedef struct painter {
     const tc_box *propagated;  /* the box whose background is the canvas's */
 } painter;
 
+/* Device pixels. Far-off coordinates saturate (they're clipped anyway), so
+   sums of them can't overflow an int. */
 static int px(float v)
 {
+    if (!(v > -1e8f)) /* NaN too */
+        return -100000000;
+    if (v > 1e8f)
+        return 100000000;
     return (int)floor(v + 0.5f);
 }
 

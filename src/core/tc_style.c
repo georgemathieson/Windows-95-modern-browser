@@ -1514,7 +1514,7 @@ static void length_of(styler *st, float font_size, const tc_pval *v, tc_length *
     tc_length_basis b;
     memset(out, 0, sizeof *out);
     if (v->kind == PV_NUMBER) {
-        out->px = v->n.f;
+        out->px = tc_length_clamp(v->n.f);
         return;
     }
     if (v->kind != PV_LENGTH)
@@ -1522,6 +1522,8 @@ static void length_of(styler *st, float font_size, const tc_pval *v, tc_length *
     basis_of(st, font_size, &b);
     if (tc_calc_compute(&st->out->arena, v->ptr, &b, out) != TC_OK)
         st->nomem = 1;
+    out->px = tc_length_clamp(out->px);
+    out->pct = tc_length_clamp(out->pct);
 }
 
 /* A length resolved now, percentages against pct_basis. */
@@ -1555,6 +1557,8 @@ static float keyword_size(int k, int mono)
     static const float scale[] = { 3.0f / 5, 3.0f / 4, 8.0f / 9, 1, 6.0f / 5, 3.0f / 2, 2, 3 };
     return scale[TC_CLAMP(k, 0, 7)] * (mono ? 13 : 16);
 }
+
+#define MAX_FONT_SIZE 10000
 
 static void compute_font_size(styler *st, tc_style *s, const tc_style *parent, const tc_pval *v)
 {
@@ -1721,7 +1725,7 @@ static void apply(styler *st, tc_style *s, const tc_style *parent, uint16_t p, c
             s->line_height = 0;
         } else if (v->kind == PV_NUMBER) {
             s->line_height_kind = TC_LINE_HEIGHT_NUMBER;
-            s->line_height = v->n.f;
+            s->line_height = tc_length_clamp(v->n.f);
         } else {
             s->line_height_kind = TC_LINE_HEIGHT_PX;
             s->line_height = px_of(st, s->font_size, v, s->font_size);
@@ -1833,6 +1837,9 @@ static void compute(styler *st, tc_style *s, const tc_style *parent, const tc_el
         if (first[i] == P_FONT_SIZE) {
             if (s->font_size_keyword)
                 s->font_size = keyword_size(s->font_size_keyword - 1, is_monospace(s)) * s->font_size_factor;
+            /* Nothing legible is bigger, and layout's arithmetic stays finite (NaN too). */
+            if (!(s->font_size <= MAX_FONT_SIZE))
+                s->font_size = MAX_FONT_SIZE;
             if (is_root)
                 st->root_font_size = s->font_size;
         }
