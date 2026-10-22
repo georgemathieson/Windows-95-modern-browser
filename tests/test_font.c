@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "tc_font.h"
@@ -241,6 +242,101 @@ static void test_no_fonts(void)
     tc_font_set_free(set);
 }
 
+/* tests/data/fonts, made by tools/make_test_fonts.py: rectangles a full
+   em (1000 units) wide. The collection holds "Tachyon Test CJK" and
+   "Tachyon Test Symbols" (an alpha and a snowman). */
+static void test_collections(void)
+{
+    const tc_test_blob *ttc = tc_test_blob_get("tachyon-test.ttc");
+    const char *path = "tc-test-fonts.ttc";
+    tc_font_set *set = tc_font_set_new();
+    int weight, italic;
+    FILE *f;
+    if (!ttc || !set)
+        return;
+    TC_CHECK_INT(tc_font_set_add_data(set, ttc->data, ttc->len, NULL), TC_OK);
+    TC_CHECK_INT(tc_font_set_count(set), 2);
+    TC_CHECK_STR(tc_font_set_face(set, 0, &weight, &italic), "Tachyon Test CJK");
+    TC_CHECK_STR(tc_font_set_face(set, 1, &weight, &italic), "Tachyon Test Symbols");
+    TC_CHECK(weight == 400 && italic == 0);
+    TC_CHECK_INT(tc_font_set_add_data(set, "not a font at all", 17, NULL), TC_ERR_INVALID);
+    TC_CHECK_INT(tc_font_set_add_data(set, ttc->data, 40, NULL), TC_ERR_INVALID); /* cut short */
+    TC_CHECK_INT(tc_font_set_add_data(set, ttc->data, ttc->len, "Renamed"), TC_OK);
+    TC_CHECK_STR(tc_font_set_face(set, 3, &weight, &italic), "Renamed");
+    tc_font_set_free(set);
+    /* From a file, read a table at a time. */
+    f = fopen(path, "wb");
+    if (!f || fwrite(ttc->data, 1, ttc->len, f) != ttc->len) {
+        if (f)
+            fclose(f);
+        tc_test_fail(__FILE__, __LINE__, "can't write the test font file");
+        return;
+    }
+    fclose(f);
+    set = tc_font_set_new();
+    TC_CHECK_INT(tc_font_set_add_file(set, path, NULL, 0, 0), TC_OK);
+    TC_CHECK_INT(tc_font_set_add_file(set, path, NULL, 0, 0), TC_OK); /* once only */
+    TC_CHECK_INT(tc_font_set_count(set), 2);
+    TC_CHECK_STR(tc_font_set_face(set, 1, &weight, &italic), "Tachyon Test Symbols");
+    {
+        /* Its faces' characters are read from the file too. */
+        static const char *const symbols[] = { "Tachyon Test Symbols" };
+        const tc_font *sym = tc_font_match(set, symbols, 1, 400, 0, 20);
+        TC_CHECK_STR(tc_font_family(tc_font_for_char(sym, 0x65E5), NULL, NULL), "Tachyon Test CJK");
+        TC_CHECK(fabs(tc_font_measure(sym, "\xE6\x97\xA5\xE2\x98\x83", 6, 0) - 40) < 0.01); /* 日☃ */
+    }
+    tc_font_set_free(set);
+    remove(path);
+}
+
+static void test_fallback(void)
+{
+    static const char *const symbols[] = { "Tachyon Test Symbols" };
+    const tc_test_blob *ttc = tc_test_blob_get("tachyon-test.ttc"), *cjk = tc_test_blob_get("tachyon-test-cjk.ttf");
+    tc_font_set *set = tc_font_set_new();
+    const tc_font *f, *fb;
+    tc_surface s;
+    int bold;
+    if (!ttc || !cjk || !set)
+        return;
+    tc_font_set_add_data(set, ttc->data, ttc->len, NULL);
+    f = tc_font_match(set, symbols, 1, 400, 0, 20);
+    TC_CHECK_STR(tc_font_family(f, NULL, NULL), "Tachyon Test Symbols");
+    /* Its own alpha, then 中 from the other font, a full em each. */
+    TC_CHECK(tc_font_for_char(f, 0x391) == f);
+    TC_CHECK_STR(tc_font_family(tc_font_for_char(f, 0x4E2D), NULL, NULL), "Tachyon Test CJK");
+    TC_CHECK(fabs(tc_font_measure(f, "\xCE\x91\xE4\xB8\xAD", 5, 0) - 40) < 0.01);
+    /* Nobody has Thai: its own missing glyph (half an em). Invisible
+       characters are nothing. */
+    TC_CHECK(tc_font_for_char(f, 0xE01) == f);
+    TC_CHECK(fabs(tc_font_measure(f, "\xE0\xB8\x81", 3, 0) - 10) < 0.01);
+    TC_CHECK(fabs(tc_font_measure(f, "\xE2\x80\x8B\xEF\xBB\xBF", 6, 0)) < 0.01);
+    /* Drawn: 中 is a bar 450 to 550 units across its em. */
+    if (tc_surface_init(&s, 60, 30) == TC_OK) {
+        tc_surface_fill(&s, tc_rect_make(0, 0, 60, 30), TC_RGB(255, 255, 255));
+        tc_font_draw(f, &s, tc_rect_make(0, 0, 60, 30), 0, 24, "\xCE\x91\xE4\xB8\xAD", 5, 0, TC_RGB(0, 0, 0));
+        TC_CHECK_INT(tc_surface_get(&s, 10, 18), 0x000000); /* the alpha's box */
+        TC_CHECK_INT(tc_surface_get(&s, 30, 10), 0x000000); /* 中's bar */
+        TC_CHECK_INT(tc_surface_get(&s, 25, 10), 0xFFFFFF);
+        tc_surface_free(&s);
+    }
+    /* Bold: the fallback is bold too (synthesised, like the font). */
+    f = tc_font_match(set, symbols, 1, 700, 0, 20);
+    fb = tc_font_for_char(f, 0x4E2D);
+    TC_CHECK_STR(tc_font_family(fb, &bold, NULL), "Tachyon Test CJK");
+    TC_CHECK(bold);
+    tc_font_set_free(set);
+
+    /* The first face in the set that has it: Windows' fonts are added
+       before the font pack. */
+    set = tc_font_set_new();
+    tc_font_set_add_data(set, cjk->data, cjk->len, "First");
+    tc_font_set_add_data(set, ttc->data, ttc->len, NULL);
+    f = tc_font_match(set, symbols, 1, 400, 0, 20);
+    TC_CHECK_STR(tc_font_family(tc_font_for_char(f, 0x3042), NULL, NULL), "First");
+    tc_font_set_free(set);
+}
+
 void tc_suite_font(void)
 {
     TC_RUN(test_matching);
@@ -248,4 +344,6 @@ void tc_suite_font(void)
     TC_RUN(test_drawing);
     TC_RUN(test_big_glyphs);
     TC_RUN(test_no_fonts);
+    TC_RUN(test_collections);
+    TC_RUN(test_fallback);
 }

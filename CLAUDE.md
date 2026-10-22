@@ -24,7 +24,7 @@ only when George asks.
 dpkg --add-architecture i386 && apt-get update
 apt-get install -y cmake ninja-build python3 mingw-w64 wine wine32:i386 xvfb xauth \
     zip unzip mtools genisoimage nsis x11-apps imagemagick xdotool clang libclang-rt-18-dev \
-    fonts-liberation
+    fonts-liberation fonts-wqy-microhei fonts-dejavu-core
 
 cmake --preset host  && cmake --build --preset host  && ctest --preset host
 cmake --preset win95 && cmake --build --preset win95 && xvfb-run -a ctest --preset win95

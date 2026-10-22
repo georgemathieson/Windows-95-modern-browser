@@ -145,7 +145,7 @@ void rendered_free(rendered *r)
     tc_buf_free(&r->boxes);
 }
 
-tc_font_set *render_fonts(const char *dir)
+tc_font_set *render_fonts(const char *const *dirs_given, size_t ndirs)
 {
     static const char *const dirs[] = {
         "/usr/share/fonts/truetype/liberation",
@@ -155,8 +155,9 @@ tc_font_set *render_fonts(const char *dir)
     size_t i;
     if (!set)
         return NULL;
-    if (dir) {
-        tc_font_set_add_dir(set, dir);
+    if (ndirs) {
+        for (i = 0; i < ndirs; i++)
+            tc_font_set_add_dir(set, dirs_given[i]);
         return set;
     }
     for (i = 0; i < sizeof dirs / sizeof dirs[0]; i++)

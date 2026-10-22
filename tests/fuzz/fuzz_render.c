@@ -5,7 +5,8 @@
  * The first input byte picks the mode and the viewport width. Even modes:
  * the rest is a page. Odd modes: the rest is a style sheet, applied to a
  * fixed page with a bit of everything. Text is set in the Liberation fonts
- * if they're installed (so glyph code runs too), else the box font. The
+ * if they're installed (so glyph code runs too), else the box font, with
+ * the test fonts for Chinese and Japanese characters they lack. The
  * painted pixels are animated and dithered as the browser would. */
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,8 @@ static const char fixed_page[] =
     "linear-gradient(45deg, red, blue 40%, lime)'>tiled</div>"
     "<div hidden>hidden</div><span dir=rtl>\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D</span> caf\xC3\xA9 \xE2\x80\x94 "
     "\xF0\x9F\x98\x80<details><summary>s</summary>d</details><svg><circle/></svg>"
+    "<p lang=ja>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x80\x8C\xE4\xB8\xAD\xE3\x80\x8D\xE3\x80\x82"
+    "<b>\xE3\x81\x82</b>\xE2\x98\x83</p>"
     "</body></html>";
 
 static tc_font_set *fonts(void)
@@ -48,6 +51,7 @@ static tc_font_set *fonts(void)
         if (!set)
             abort();
         tc_font_set_add_dir(set, "/usr/share/fonts/truetype/liberation");
+        tc_font_set_add_dir(set, TEST_FONTS_DIR); /* fallback for other scripts */
     }
     return set;
 }

@@ -15,16 +15,27 @@
 #define BIG_GLYPH (128 * 128)   /* pixels: bigger glyphs aren't cached, and are drawn a visible piece at a time */
 
 enum { FACE_UNLOADED, FACE_LOADED, FACE_FAILED };
+enum { COVERAGE_UNKNOWN, COVERAGE_READY, COVERAGE_FAILED };
+
+#define MAX_FONT_FILE (64L << 20)
+#define MAX_COLLECTION 16       /* faces read from one collection */
+#define MAX_TABLES 256
+#define MAX_RANGES (1u << 17)   /* character ranges in a cmap */
+#define FALLBACK_CACHE 64
 
 typedef struct face {
-    char *path;
+    char *path;                 /* NULL: added from memory, data holds it */
     char *family;
     uint16_t weight;
     uint8_t italic;
     uint8_t state;
+    uint8_t coverage;           /* COVERAGE_* */
     int index;                  /* in a collection */
     unsigned char *data;
+    size_t size;
     stbtt_fontinfo info;
+    uint32_t *ranges;           /* the characters it has: first, last, first, last... sorted */
+    uint32_t nranges;
     /* In font units. */
     int upem, ascent, descent, line_gap, x_height, cap_height;
     int underline_pos, underline_thickness, strikeout_pos, strikeout_size;
@@ -49,6 +60,10 @@ struct tc_font {
     int32_t ascii[128];         /* glyph ids, -1 until looked up */
     glyph *glyphs;              /* hashed by id */
     uint32_t glyphs_cap, nglyphs;
+    struct {
+        uint32_t cp;            /* 0: empty */
+        tc_font *font;          /* NULL: no font has it */
+    } fallback[FALLBACK_CACHE];  /* fonts for characters this one lacks */
 };
 
 #define MATCH_CACHE 64
@@ -112,7 +127,7 @@ static unsigned char *read_file(const char *path, size_t *size)
     long len;
     if (!f)
         return NULL;
-    if (fseek(f, 0, SEEK_END) == 0 && (len = ftell(f)) > 12 && len < (64L << 20) && fseek(f, 0, SEEK_SET) == 0 &&
+    if (fseek(f, 0, SEEK_END) == 0 && (len = ftell(f)) > 12 && len < MAX_FONT_FILE && fseek(f, 0, SEEK_SET) == 0 &&
         (data = malloc((size_t)len)) != NULL) {
         if (fread(data, 1, (size_t)len, f) != (size_t)len) {
             free(data);
@@ -145,35 +160,238 @@ static uint32_t find_table(const unsigned char *data, size_t size, uint32_t star
     return 0;
 }
 
-/* A name from the 'name' table as UTF-8, or NULL. */
-static char *font_name(const stbtt_fontinfo *info, int id)
+/* A font file's bytes: in memory, or read from disk a piece at a time, so
+   that finding a face's names or characters doesn't read all of a 10 MB
+   collection. */
+typedef struct font_source {
+    FILE *file;
+    const unsigned char *data;
+    size_t size;
+} font_source;
+
+static int source_open(font_source *src, const char *path)
 {
-    static const int ids[][3] = { { 3, 1, 0x409 }, { 3, 0, 0x409 }, { 1, 0, 0 } };
-    size_t k;
-    for (k = 0; k < sizeof ids / sizeof ids[0]; k++) {
-        int len, i;
-        const char *s = stbtt_GetFontNameString(info, &len, ids[k][0], ids[k][1], ids[k][2], id);
-        char *out, *p;
-        if (!s || len <= 0)
+    long len;
+    memset(src, 0, sizeof *src);
+    if (!(src->file = fopen(path, "rb")))
+        return 0;
+    if (fseek(src->file, 0, SEEK_END) != 0 || (len = ftell(src->file)) <= 12 || len >= MAX_FONT_FILE) {
+        fclose(src->file);
+        src->file = NULL;
+        return 0;
+    }
+    src->size = (size_t)len;
+    return 1;
+}
+
+static void source_close(font_source *src)
+{
+    if (src->file)
+        fclose(src->file);
+    src->file = NULL;
+}
+
+/* len bytes at off, copied, or NULL if they aren't all there. */
+static unsigned char *source_read(font_source *src, uint32_t off, uint32_t len)
+{
+    unsigned char *out;
+    if (off > src->size || len > src->size - off || !(out = malloc(len ? len : 1)))
+        return NULL;
+    if (src->data) {
+        memcpy(out, src->data + off, len);
+    } else if (fseek(src->file, (long)off, SEEK_SET) != 0 || fread(out, 1, len, src->file) != len) {
+        free(out);
+        return NULL;
+    }
+    return out;
+}
+
+/* How many faces the file has (a collection has several), and where face
+   index starts; -1 if it has no such face. */
+static long face_start(font_source *src, int index, int *count)
+{
+    unsigned char *head = source_read(src, 0, 12), *off;
+    long start = -1;
+    *count = 0;
+    if (!head)
+        return -1;
+    if (memcmp(head, "ttcf", 4) == 0) {
+        *count = (int)TC_MIN(u32(head + 8), MAX_COLLECTION);
+        if (index >= 0 && index < *count && (off = source_read(src, 12 + 4 * (uint32_t)index, 4)) != NULL) {
+            start = (long)u32(off);
+            free(off);
+        }
+    } else {
+        *count = 1;
+        start = index == 0 ? 0 : -1;
+    }
+    free(head);
+    return start;
+}
+
+/* A table of the face starting at start: its offset and length, or 0. */
+static uint32_t source_table(font_source *src, uint32_t start, const char *tag, uint32_t *len)
+{
+    unsigned char *dir = source_read(src, start, 12), *recs;
+    uint32_t n, i, found = 0;
+    if (!dir)
+        return 0;
+    n = TC_MIN(u16(dir + 4), MAX_TABLES);
+    free(dir);
+    recs = source_read(src, start + 12, 16 * n);
+    for (i = 0; recs && i < n; i++)
+        if (memcmp(recs + 16 * i, tag, 4) == 0) {
+            uint32_t off = u32(recs + 16 * i + 8), l = u32(recs + 16 * i + 12);
+            if (off <= src->size && l <= src->size - off) {
+                found = off;
+                *len = l;
+            }
+            break;
+        }
+    free(recs);
+    return found;
+}
+
+/* The family from a 'name' table, as UTF-8: the typographic family (16)
+   rather than the legacy one (1), in English if there's one. */
+static char *family_name(const unsigned char *t, uint32_t len)
+{
+    uint32_t count, strings, i, best = 0;
+    int best_score = 0;
+    char *out, *p;
+    if (len < 6)
+        return NULL;
+    count = u16(t + 2);
+    strings = u16(t + 4);
+    for (i = 0; i < count && 6 + 12 * (i + 1) <= len; i++) {
+        const unsigned char *r = t + 6 + 12 * i;
+        int platform = u16(r), encoding = u16(r + 2), lang = u16(r + 4), id = u16(r + 6), score;
+        if (id != 1 && id != 16)
             continue;
-        out = p = malloc((size_t)len * 3 + 1);
-        if (!out)
+        if (platform == 3 && encoding == 1 && lang == 0x409)
+            score = 4;
+        else if (platform == 3 && encoding == 0 && lang == 0x409)
+            score = 3;
+        else if (platform == 1 && encoding == 0 && lang == 0)
+            score = 2;
+        else if (platform == 3 && (encoding == 1 || encoding == 10))
+            score = 1;
+        else
+            continue;
+        score += id == 16 ? 10 : 0;
+        if (score > best_score) {
+            best_score = score;
+            best = i;
+        }
+    }
+    if (!best_score) {
+        return NULL;
+    } else {
+        const unsigned char *r = t + 6 + 12 * best, *str;
+        uint32_t n = u16(r + 8), off = strings + u16(r + 10), k;
+        if (off > len || n > len - off || !(out = p = malloc((size_t)n * 3 + 1)))
             return NULL;
-        if (ids[k][0] == 3) {
-            for (i = 0; i + 1 < len; i += 2) {
-                uint32_t cp = u16((const unsigned char *)s + i);
+        str = t + off;
+        if (u16(r) == 3) {
+            for (k = 0; k + 1 < n; k += 2) {
+                uint32_t cp = u16(str + k);
                 if (cp >= 0xD800 && cp <= 0xDFFF)
                     cp = TC_REPLACEMENT_CHAR;
                 p += tc_utf8_encode(cp, p);
             }
         } else {
-            for (i = 0; i < len; i++)
-                *p++ = s[i] & 0x80 ? '?' : s[i];
+            for (k = 0; k < n; k++)
+                *p++ = str[k] & 0x80 ? '?' : (char)str[k];
         }
         *p = '\0';
+        if (!*out) {
+            free(out);
+            return NULL;
+        }
         return out;
     }
-    return NULL;
+}
+
+static int compare_ranges(const void *a, const void *b)
+{
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* The characters a cmap maps, as sorted, merged ranges: from its Unicode
+   subtable, the full repertoire (format 12) if there is one, else the
+   Basic Multilingual Plane's (format 4). A format 4 segment counts as a
+   whole; the glyph lookup has the last word. */
+static int cmap_ranges(const unsigned char *t, uint32_t len, uint32_t **out, uint32_t *nout)
+{
+    uint32_t i, n, best = 0, *r = NULL, nr = 0, k;
+    int best_rank = 0;
+    *out = NULL;
+    *nout = 0;
+    if (len < 4)
+        return 0;
+    n = u16(t + 2);
+    for (i = 0; i < n && 4 + 8 * (i + 1) <= len; i++) {
+        const unsigned char *rec = t + 4 + 8 * i;
+        int platform = u16(rec), encoding = u16(rec + 2), rank = 0, format;
+        uint32_t off = u32(rec + 4);
+        if (off > len - 2)
+            continue;
+        format = u16(t + off);
+        if (platform == 0 || (platform == 3 && (encoding == 1 || encoding == 10)))
+            rank = format == 12 ? 2 : format == 4 ? 1 : 0;
+        if (rank > best_rank) {
+            best_rank = rank;
+            best = off;
+        }
+    }
+    if (best_rank == 2 && best + 16 <= len) {
+        uint32_t groups = u32(t + best + 12);
+        if (groups > MAX_RANGES || groups > (len - best - 16) / 12)
+            return 0;
+        r = malloc(((size_t)groups * 2 + 2) * sizeof *r);
+        for (k = 0; r && k < groups; k++) {
+            const unsigned char *g = t + best + 16 + 12 * k;
+            uint32_t first = u32(g), last = u32(g + 4);
+            if (first <= last && last <= 0x10FFFF) {
+                r[2 * nr] = first;
+                r[2 * nr + 1] = last;
+                nr++;
+            }
+        }
+    } else if (best_rank == 1 && best + 14 <= len) {
+        uint32_t segs = u16(t + best + 6) / 2;
+        const unsigned char *ends = t + best + 14, *starts = ends + 2 * segs + 2;
+        if (best + 16 + 4 * (size_t)segs > len)
+            return 0;
+        r = malloc(((size_t)segs * 2 + 2) * sizeof *r);
+        for (k = 0; r && k < segs; k++) {
+            uint32_t first = u16(starts + 2 * k), last = u16(ends + 2 * k);
+            if (first <= last && first != 0xFFFF) {
+                r[2 * nr] = first;
+                r[2 * nr + 1] = last;
+                nr++;
+            }
+        }
+    } else {
+        return 0;
+    }
+    if (!r)
+        return 0;
+    qsort(r, nr, 2 * sizeof *r, compare_ranges);
+    for (i = 0, k = 0; i < nr; i++) {
+        if (k && r[2 * i] <= r[2 * k - 1] + 1) {
+            if (r[2 * i + 1] > r[2 * k - 1])
+                r[2 * k - 1] = r[2 * i + 1];
+        } else {
+            r[2 * k] = r[2 * i];
+            r[2 * k + 1] = r[2 * i + 1];
+            k++;
+        }
+    }
+    *out = r;
+    *nout = k;
+    return 1;
 }
 
 static int add_face(tc_font_set *set, const char *path, const char *family, int weight, int italic, int index)
@@ -190,9 +408,9 @@ static int add_face(tc_font_set *set, const char *path, const char *family, int 
     f = calloc(1, sizeof *f);
     if (!f)
         return TC_ERR_NOMEM;
-    f->path = copy_str(path);
+    f->path = path ? copy_str(path) : NULL;
     f->family = copy_str(family);
-    if (!f->path || !f->family) {
+    if ((path && !f->path) || !f->family) {
         free(f->path);
         free(f->family);
         free(f);
@@ -208,15 +426,65 @@ static int add_face(tc_font_set *set, const char *path, const char *family, int 
     return TC_OK;
 }
 
+/* Add each face of a font file or collection, named as it names itself
+   (or family), reading only the tables that say so. A face from memory
+   keeps a copy of the bytes. */
+static int add_faces(tc_font_set *set, font_source *src, const char *path, const char *family)
+{
+    int count = 1, i, err = TC_OK, added = 0;
+    for (i = 0; i < count && err == TC_OK; i++) {
+        long start = face_start(src, i, &count);
+        uint32_t len = 0, table;
+        unsigned char *t;
+        char *name = NULL;
+        int w = 400, it = 0;
+        if (start < 0)
+            continue;
+        if ((table = source_table(src, (uint32_t)start, "name", &len)) != 0 &&
+            (t = source_read(src, table, TC_MIN(len, 1u << 20))) != NULL) {
+            name = family_name(t, TC_MIN(len, 1u << 20));
+            free(t);
+        }
+        if (!name && !family)
+            continue;
+        if ((table = source_table(src, (uint32_t)start, "OS/2", &len)) != 0 && len >= 64 &&
+            (t = source_read(src, table, 64)) != NULL) {
+            w = u16(t + 4);
+            it = u16(t + 62) & 1;
+            free(t);
+        } else if ((table = source_table(src, (uint32_t)start, "head", &len)) != 0 && len >= 54 &&
+                   (t = source_read(src, table, 54)) != NULL) {
+            int mac = u16(t + 44);
+            w = mac & 1 ? 700 : 400;
+            it = (mac & 2) != 0;
+            free(t);
+        }
+        tc_mutex_lock(set->lock);
+        err = add_face(set, path, family ? family : name, w, it, i);
+        if (!err && src->data) {
+            face *f = set->faces[set->nfaces - 1];
+            if ((f->data = malloc(src->size)) != NULL) {
+                memcpy(f->data, src->data, src->size);
+                f->size = src->size;
+            } else {
+                f->state = FACE_FAILED;
+            }
+        }
+        tc_mutex_unlock(set->lock);
+        free(name);
+        added += !err;
+    }
+    return err ? err : added ? TC_OK : TC_ERR_INVALID;
+}
+
 int tc_font_set_add_file(tc_font_set *set, const char *path, const char *family, int weight, int italic)
 {
-    unsigned char *data;
-    size_t size = 0;
-    int n, i, err = TC_OK;
+    font_source src;
     uint32_t k;
+    int err;
 
     for (k = 0; k < set->nfaces; k++)
-        if (strcmp(set->faces[k]->path, path) == 0)
+        if (set->faces[k]->path && strcmp(set->faces[k]->path, path) == 0)
             return TC_OK;
     if (family) {
         tc_mutex_lock(set->lock);
@@ -224,40 +492,22 @@ int tc_font_set_add_file(tc_font_set *set, const char *path, const char *family,
         tc_mutex_unlock(set->lock);
         return err;
     }
-    /* Read the names and style from the file itself. */
-    data = read_file(path, &size);
-    if (!data)
+    if (!source_open(&src, path))
         return TC_ERR_INVALID;
-    n = stbtt_GetNumberOfFonts(data);
-    for (i = 0; i < n && i < 16 && err == TC_OK; i++) {
-        int start = stbtt_GetFontOffsetForIndex(data, i);
-        stbtt_fontinfo info;
-        uint32_t os2_len = 0, os2;
-        char *name;
-        int w = 400, it = 0;
-        if (start < 0 || (size_t)start >= size || !stbtt_InitFont(&info, data, start))
-            continue;
-        name = font_name(&info, 16);
-        if (!name)
-            name = font_name(&info, 1);
-        if (!name)
-            continue;
-        os2 = find_table(data, size, (uint32_t)start, "OS/2", &os2_len);
-        if (os2 && os2_len >= 64) {
-            w = u16(data + os2 + 4);
-            it = u16(data + os2 + 62) & 1;
-        } else if (info.head) {
-            int mac = u16(data + info.head + 44);
-            w = mac & 1 ? 700 : 400;
-            it = (mac & 2) != 0;
-        }
-        tc_mutex_lock(set->lock);
-        err = add_face(set, path, name, w, it, i);
-        tc_mutex_unlock(set->lock);
-        free(name);
-    }
-    free(data);
+    err = add_faces(set, &src, path, NULL);
+    source_close(&src);
     return err;
+}
+
+int tc_font_set_add_data(tc_font_set *set, const void *data, size_t len, const char *family)
+{
+    font_source src;
+    memset(&src, 0, sizeof src);
+    src.data = data;
+    src.size = len;
+    if (!data || len <= 12 || len >= (size_t)MAX_FONT_FILE)
+        return TC_ERR_INVALID;
+    return add_faces(set, &src, NULL, family);
 }
 
 struct add_ctx {
@@ -279,6 +529,8 @@ size_t tc_font_set_add_dir(tc_font_set *set, const char *dir)
     c.set = set;
     c.added = 0;
     tc_dir_list(dir, ".ttf", add_dir_file, &c);
+    tc_dir_list(dir, ".ttc", add_dir_file, &c);
+    tc_dir_list(dir, ".otf", add_dir_file, &c);
     return c.added;
 }
 
@@ -323,7 +575,10 @@ static int load_face(face *f)
     if (f->state != FACE_UNLOADED)
         return f->state == FACE_LOADED;
     f->state = FACE_FAILED;
-    f->data = read_file(f->path, &size);
+    if (f->data)
+        size = f->size; /* from memory */
+    else if ((f->data = read_file(f->path, &size)) != NULL)
+        f->size = size;
     if (!f->data)
         return 0;
     start = stbtt_GetFontOffsetForIndex(f->data, f->index);
@@ -417,6 +672,7 @@ void tc_font_set_free(tc_font_set *set)
         free(set->faces[i]->path);
         free(set->faces[i]->family);
         free(set->faces[i]->data);
+        free(set->faces[i]->ranges);
         free(set->faces[i]);
     }
     free(set->faces);
@@ -901,6 +1157,105 @@ static float box_text(const tc_font *f, tc_surface *s, tc_rect clip, float x, fl
     return pen - x;
 }
 
+/* ---- Fallback: characters a font lacks ---- */
+
+/* Read which characters a face has, once. */
+static int face_coverage(face *f)
+{
+    font_source src;
+    unsigned char *t;
+    uint32_t len = 0, table;
+    long start;
+    int count, ok = 0;
+    if (f->coverage != COVERAGE_UNKNOWN)
+        return f->coverage == COVERAGE_READY;
+    f->coverage = COVERAGE_FAILED;
+    if (f->data) {
+        memset(&src, 0, sizeof src);
+        src.data = f->data;
+        src.size = f->size;
+    } else if (!source_open(&src, f->path)) {
+        return 0;
+    }
+    start = face_start(&src, f->index, &count);
+    if (start >= 0 && (table = source_table(&src, (uint32_t)start, "cmap", &len)) != 0 && len <= (4u << 20) &&
+        (t = source_read(&src, table, len)) != NULL) {
+        ok = cmap_ranges(t, len, &f->ranges, &f->nranges);
+        free(t);
+    }
+    source_close(&src);
+    if (ok)
+        f->coverage = COVERAGE_READY;
+    return ok;
+}
+
+static int covers(const face *f, uint32_t cp)
+{
+    uint32_t lo = 0, hi = f->nranges;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (cp < f->ranges[2 * mid])
+            hi = mid;
+        else if (cp > f->ranges[2 * mid + 1])
+            lo = mid + 1;
+        else
+            return 1;
+    }
+    return 0;
+}
+
+/* Unicode's default ignorables (format controls, variation selectors and
+   the like): drawn as nothing when a font lacks them, not as a box. */
+static int ignorable(uint32_t cp)
+{
+    return cp == 0xAD || cp == 0x34F || cp == 0x61C || (cp >= 0x115F && cp <= 0x1160) ||
+           (cp >= 0x17B4 && cp <= 0x17B5) || (cp >= 0x180B && cp <= 0x180F) || (cp >= 0x200B && cp <= 0x200F) ||
+           (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) || cp == 0x3164 ||
+           (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0xFEFF || cp == 0xFFA0 || (cp >= 0xFFF0 && cp <= 0xFFF8) ||
+           (cp >= 0x1BCA0 && cp <= 0x1BCA3) || (cp >= 0x1D173 && cp <= 0x1D17A) || (cp >= 0xE0000 && cp <= 0xE0FFF);
+}
+
+/* A font for a character f lacks, at its size and style: from the first
+   face in the set that has it (decision 36: Windows' fonts are added before
+   Tachyon's font pack), or NULL. With the set locked. */
+static tc_font *fallback_font(tc_font *f, uint32_t cp)
+{
+    tc_font_set *set = f->set;
+    uint32_t slot = cp % FALLBACK_CACHE, i;
+    int weight = f->fake_bold ? 700 : f->face->weight, italic = f->face->italic || f->fake_italic;
+    tc_font *found = NULL;
+    if (f->fallback[slot].cp == cp)
+        return f->fallback[slot].font;
+    for (i = 0; i < set->nfaces && !found; i++) {
+        face *fc = set->faces[i], *best;
+        if (fc == f->face || fc->state == FACE_FAILED || !face_coverage(fc) || !covers(fc, cp))
+            continue;
+        /* Its family's face nearest the style, if that has the character too. */
+        best = pick_face(set, fc->family, weight, italic);
+        if (!best || !face_coverage(best) || !covers(best, cp) || !load_face(best) ||
+            !stbtt_FindGlyphIndex(&best->info, (int)cp))
+            best = fc;
+        if (!load_face(best) || !stbtt_FindGlyphIndex(&best->info, (int)cp))
+            continue;
+        found = get_font(set, best, f->size, weight >= 600 && best->weight <= 500, italic && !best->italic);
+    }
+    f->fallback[slot].cp = cp;
+    f->fallback[slot].font = found;
+    return found;
+}
+
+const tc_font *tc_font_for_char(const tc_font *font, uint32_t cp)
+{
+    tc_font *f = (tc_font *)font, *fb = NULL;
+    if (!f->set || !f->face || cp < 0x20)
+        return font;
+    tc_mutex_lock(f->set->lock);
+    if (!glyph_id(f, cp) && !ignorable(cp))
+        fb = fallback_font(f, cp);
+    tc_mutex_unlock(f->set->lock);
+    return fb ? fb : font;
+}
+
 /* Measure, and draw if s isn't NULL. */
 static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float y, const char *text, size_t len,
                  float letter_spacing, tc_color color)
@@ -923,26 +1278,38 @@ static float run(const tc_font *cf, tc_surface *s, tc_rect clip, float x, float 
     while (i < len) {
         uint32_t cp;
         int32_t id;
+        tc_font *gf = f; /* the font this character comes from */
         glyph *g;
         i += tc_utf8_decode(text + i, len - i, &cp);
         id = glyph_id(f, cp);
-        if (prev >= 0 && id && prev)
+        if (!id && cp >= 0x20) {
+            tc_font *fb;
+            if (ignorable(cp)) {
+                prev = -1;
+                continue;
+            }
+            if ((fb = fallback_font(f, cp)) != NULL) {
+                gf = fb;
+                id = glyph_id(fb, cp);
+            }
+        }
+        if (gf == f && prev > 0 && id)
             pen += stbtt_GetGlyphKernAdvance(&f->face->info, prev, id) * f->scale;
-        g = find_glyph(f, id);
+        g = find_glyph(gf, id);
         if (!g)
             break;
         if (s && !(fabsf(pen) < 1e8f))
             s = NULL; /* letter-spacing took the rest far off the surface */
         if (s && TC_ALPHA(color)) {
             if (!g->bitmap)
-                rasterise(f, g);
+                rasterise(gf, g);
             if (g->bitmap == &big_glyph)
-                draw_part(f, g, s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, color);
+                draw_part(gf, g, s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, color);
             else if (g->w)
                 blit(s, clip, (int)floor(pen + 0.5f) + g->xoff, baseline + g->yoff, g, color);
         }
         pen += g->advance + letter_spacing;
-        prev = id;
+        prev = gf == f ? id : -1;
     }
     if (s)
         trim_cache(f->set);

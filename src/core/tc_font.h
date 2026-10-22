@@ -3,8 +3,11 @@
  * drawn into a tc_surface with antialiasing and a glyph cache.
  *
  * Text is UTF-8. A font set may be used from several threads at once. Faces
- * that a family lacks (bold, italic) are synthesised, as browsers do. When
- * no font at all is installed, text is drawn as boxes. */
+ * that a family lacks (bold, italic) are synthesised, as browsers do. A
+ * character the font lacks comes from the first face in the set that has
+ * it, at the same size and style (decision 36), so fonts added later are
+ * the last resort. When no font at all is installed, text is drawn as
+ * boxes. */
 #ifndef TC_FONT_H
 #define TC_FONT_H
 
@@ -27,7 +30,11 @@ void tc_font_set_free(tc_font_set *set);
 /* Add a TrueType font file (or collection). family, weight and italic: as
    the system lists the font, or family NULL to read them from the file. */
 int tc_font_set_add_file(tc_font_set *set, const char *path, const char *family, int weight, int italic);
-/* Add every .ttf file in a directory; returns how many faces were added. */
+/* Add a font (or collection) from memory, copied: named family, or as
+   it names itself when family is NULL. */
+int tc_font_set_add_data(tc_font_set *set, const void *data, size_t len, const char *family);
+/* Add every font file (.ttf, .ttc, .otf) in a directory; returns how many
+   faces were added. */
 size_t tc_font_set_add_dir(tc_font_set *set, const char *dir);
 /* Add the system's fonts (tc_system_fonts). */
 size_t tc_font_set_add_system(tc_font_set *set);
@@ -46,6 +53,8 @@ const tc_font *tc_font_match(tc_font_set *set, const char *const *families, uint
    and italic are synthesised. */
 const char *tc_font_family(const tc_font *font, int *fake_bold, int *fake_italic);
 const tc_font_metrics *tc_font_get_metrics(const tc_font *font);
+/* The font a character is drawn with: font itself, or its fallback. */
+const tc_font *tc_font_for_char(const tc_font *font, uint32_t cp);
 
 /* The advance of text in px, with kerning and letter_spacing after each
    character. */

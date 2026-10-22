@@ -23,7 +23,8 @@ piece will live. It changes as the sprints land.
  |    tc_selector        selector parsing and matching             |
  |    tc_css_syntax,     CSS tokenizer and parser; property values |
  |    tc_css_values      and colours (+ tc_css_color)              |
- |    tc_font            font matching, glyphs (stb_truetype)      |
+ |    tc_font            font matching, fallback for characters a  |
+ |                       font lacks, glyphs (stb_truetype)         |
  |    tc_html_parser     tree construction; page and fragment      |
  |                       parsing entry points                      |
  |    tc_html_tokenizer  the HTML tokenizer (+ tc_entities)        |

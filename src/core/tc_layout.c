@@ -167,7 +167,54 @@ typedef struct ws_state {
     int space;      /* the last character was a collapsible space (or the line just started) */
     int column;     /* for tabs in preserved text */
     int word;       /* capitalize: inside a word */
+    uint32_t prev;  /* the last character, for the breaks around Chinese and Japanese (0: none) */
 } ws_state;
+
+/* Line breaks in Chinese, Japanese and Korean, which don't put spaces
+   between words: a simplified Unicode line breaking algorithm (UAX #14).
+   Lines may break before and after these characters... */
+static int ideographic(uint32_t c)
+{
+    return (c >= 0x2E80 && c <= 0x2FFF) || (c >= 0x3000 && c <= 0x9FFF) || (c >= 0xA000 && c <= 0xA4CF) ||
+           (c >= 0xAC00 && c <= 0xD7AF) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFE30 && c <= 0xFE4F) ||
+           (c >= 0xFF00 && c <= 0xFFEF) || (c >= 0x20000 && c <= 0x3FFFF);
+}
+
+/* ...but not before closing punctuation and the like... */
+static int no_break_before(uint32_t c)
+{
+    static const uint16_t list[] = {
+        0x21, 0x25, 0x29, 0x2C, 0x2E, 0x3A, 0x3B, 0x3F, 0x5D, 0x7D, 0x2019, 0x201D, 0x2026, 0x3001, 0x3002, 0x3003,
+        0x3005, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0x3015, 0x3017, 0x3019, 0x301B, 0x301C, 0x301E, 0x301F,
+        0x303B, 0x309D, 0x309E, 0x30FB, 0x30FC, 0x30FD, 0x30FE, 0xFF01, 0xFF05, 0xFF09, 0xFF0C, 0xFF0E, 0xFF1A,
+        0xFF1B, 0xFF1F, 0xFF3D, 0xFF5D, 0xFF60, 0xFF61, 0xFF63, 0xFF64, 0xFF65, 0xFF70,
+    };
+    size_t i;
+    for (i = 0; i < TC_ARRAY_LEN(list); i++)
+        if (c == list[i])
+            return 1;
+    return 0;
+}
+
+/* ...nor after opening punctuation. */
+static int no_break_after(uint32_t c)
+{
+    static const uint16_t list[] = {
+        0x28, 0x5B, 0x7B, 0x2018, 0x201C, 0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0x3014, 0x3016, 0x3018, 0x301A,
+        0x301D, 0xFF08, 0xFF3B, 0xFF5B, 0xFF5F, 0xFF62,
+    };
+    size_t i;
+    for (i = 0; i < TC_ARRAY_LEN(list); i++)
+        if (c == list[i])
+            return 1;
+    return 0;
+}
+
+static int cjk_break(uint32_t before, uint32_t after)
+{
+    return before && (ideographic(before) || ideographic(after)) && !no_break_before(after) &&
+           !no_break_after(before);
+}
 
 /* White-space processing (CSS Text 3, 4.1) and text-transform, into the
    layout's arena; a preserved newline ends the text there (*rest is the
@@ -195,6 +242,7 @@ static const char *process_text(tc_layout *l, const tc_style *s, const char *tex
             *forced = 1;
             ws->space = 1;
             ws->column = 0;
+            ws->prev = 0;
             break;
         }
         if (c == '\r' || c == '\f')
@@ -212,6 +260,7 @@ static const char *process_text(tc_layout *l, const tc_style *s, const char *tex
             }
             ws->space = 1;
             ws->word = 0;
+            ws->prev = 0;
             i += n;
             continue;
         }
@@ -220,11 +269,13 @@ static const char *process_text(tc_layout *l, const tc_style *s, const char *tex
             while (spaces--)
                 *p++ = ' ', ws->column++;
             ws->space = 0;
+            ws->prev = 0;
             i += n;
             continue;
         }
         if (c == 0x200B || c == 0xAD) { /* zero width space, soft hyphen: break opportunities only */
             *p++ = '\x01';
+            ws->prev = 0;
             i += n;
             continue;
         }
@@ -240,6 +291,9 @@ static const char *process_text(tc_layout *l, const tc_style *s, const char *tex
         ws->word = is_word_char(c);
         ws->space = 0;
         ws->column++;
+        if (c != ' ' && cjk_break(ws->prev, c) && s->word_break != TC_BREAK_KEEP_ALL)
+            *p++ = '\x01';
+        ws->prev = c == ' ' ? 0 : c;
         p += tc_utf8_encode(c < 0x20 ? 0xFFFD : c, p);
         i += n;
     }
@@ -297,10 +351,12 @@ static void collect_items(tc_layout *l, items *it, tc_box *b, ws_state *ws, int 
         case TC_BOX_BREAK:
             push_item(l, it, IT_BREAK, c);
             ws->space = 1;
+            ws->prev = 0;
             break;
         default:
             push_item(l, it, IT_ATOMIC, c);
             ws->space = 0;
+            ws->prev = 0;
             break;
         }
     }
@@ -366,7 +422,7 @@ static void outer_widths(tc_layout *l, tc_box *b, float *min_w, float *max_w, in
 static void inline_intrinsic(tc_layout *l, tc_box *b, float *min_w, float *max_w, int depth)
 {
     items it = { NULL, 0, 0 };
-    ws_state ws = { 1, 0, 0 };
+    ws_state ws = { 1, 0, 0, 0 };
     float line = 0, unit = 0, mn = 0, mx = 0;
     uint32_t i;
 
@@ -901,7 +957,7 @@ static void place_text(line_state *ls, item *x)
             w = word_width(x, p, q);
             if (x->wrap)
                 wrap_for(ls, w);
-            if (x->wrap && x->break_word && w > line_room(ls) - ls->x) {
+            if (x->wrap && x->break_word && q > p && w > line_room(ls) - ls->x) {
                 /* Break the word where it overflows. */
                 uint32_t e = p;
                 while (e < q) {
@@ -921,14 +977,14 @@ static void place_text(line_state *ls, item *x)
                     p = e;
                     continue;
                 }
-                p = q;
-                continue;
+                /* All of it went on this line: on to what follows it. */
+            } else {
+                pc = add_piece(ls, PC_TEXT, x, w);
+                if (!pc)
+                    return;
+                pc->start = p;
+                pc->end = q;
             }
-            pc = add_piece(ls, PC_TEXT, x, w);
-            if (!pc)
-                return;
-            pc->start = p;
-            pc->end = q;
             if (q < x->len && x->text[q] == '\x01') {
                 q++;
                 if (x->wrap)
@@ -945,7 +1001,7 @@ static void place_text(line_state *ls, item *x)
 static float layout_lines(tc_layout *l, tc_box *b, float avail, int depth)
 {
     items it = { NULL, 0, 0 };
-    ws_state ws = { 1, 0, 0 };
+    ws_state ws = { 1, 0, 0, 0 };
     line_state ls;
     uint32_t i;
 

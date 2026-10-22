@@ -1,7 +1,8 @@
 /* The reference tests: each line of reftest.list is "== test.html
  * ref.html" (they must render the same, pixel for pixel) or "!= a.html
  * b.html" (they mustn't). Pages are rendered at 400 x 300 with the
- * Liberation fonts, natively and under Wine alike.
+ * Liberation fonts, natively and under Wine alike, falling back to
+ * tests/data/fonts (the reftests' working directory is tests/reftests).
  *
  *   tachyon_reftests LIST [FAILURES_DIR]
  *
@@ -66,9 +67,11 @@ int main(int argc, char **argv)
         slash = strrchr(argv[1], '\\');
     snprintf(dir, sizeof dir, "%.*s", slash && slash - argv[1] < 500 ? (int)(slash - argv[1] + 1) : 0, argv[1]);
     tc_style_init();
-    fonts = render_fonts(NULL);
+    fonts = render_fonts(NULL, 0);
     if (!fonts || !tc_font_set_count(fonts))
         printf("     no fonts found: install fonts-liberation\n");
+    else /* the test fonts, for characters the Liberation fonts lack */
+        tc_font_set_add_dir(fonts, "../data/fonts");
     while (fgets(line, sizeof line, list)) {
         char op[8], test[256], ref[256];
         rendered a, b;

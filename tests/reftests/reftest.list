@@ -53,3 +53,5 @@
 == image-object-fit.html image-object-fit-ref.html
 == background-position.html background-position-ref.html
 == gradient.html gradient-ref.html
+== font-fallback.html font-fallback-ref.html
+== cjk-line-break.html cjk-line-break-ref.html

@@ -19,6 +19,7 @@ for f in TACHYON.EXE FETCH.EXE EXPORTS.EXE README.TXT LICENSE.TXT UNINSTAL.EXE; 
   [ -f "$dir/$f" ] || fail "$f was not installed"
 done
 cmp -s "$dir/TACHYON.EXE" "$(dirname "$setup")/TACHYON/TACHYON.EXE" || fail "TACHYON.EXE differs from the packaged one"
+[ ! -e "$dir/FONTS" ] || fail "fonts were installed without a FONTS folder beside SETUP.EXE"
 wine reg query "$key" /v UninstallString | grep -q 'C:\\TachyonTest\\UNINSTAL.EXE' || fail "no Add/Remove Programs entry"
 programs=$(find "$prefix/drive_c/users" -path '*Start Menu/Programs/Tachyon' -type d)
 [ -n "$programs" ] && [ -f "$programs/Tachyon.lnk" ] || fail "no Start menu shortcut"
@@ -36,4 +37,20 @@ wineserver -w
 [ ! -e "$dir" ] || fail "the uninstaller left $dir: $(ls "$dir")"
 [ ! -e "$programs" ] || fail "the uninstaller left the Start menu folder"
 if wine reg query "$key" >/dev/null 2>&1; then fail "the uninstaller left the Add/Remove Programs entry"; fi
+
+# Beside the font pack, as on the CD: the fonts are installed too.
+pack="$(dirname "$setup")/TACHYON"
+if [ -d "$pack/FONTS" ]; then
+  cp "$setup" "$pack/SETUP.EXE"
+  wine "$pack/SETUP.EXE" /S '/D=C:\TachyonTest'
+  wineserver -w
+  rm -f "$pack/SETUP.EXE"
+  for f in WQYMICRO.TTC DEJAVU.TTF DEJAVUB.TTF FONTS.TXT; do
+    cmp -s "$dir/FONTS/$f" "$pack/FONTS/$f" || fail "FONTS\\$f was not installed"
+  done
+  wine "$dir/UNINSTAL.EXE" /S
+  wineserver -w
+  [ ! -e "$dir" ] || fail "the uninstaller left $dir: $(ls -R "$dir")"
+  echo "test_installer.sh: and with the font pack"
+fi
 echo "test_installer.sh: installed and uninstalled $(basename "$setup")"

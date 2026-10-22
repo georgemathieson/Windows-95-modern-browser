@@ -5,7 +5,8 @@
  *
  *   --width, --height  the viewport (800 x 600)
  *   --viewport         only the viewport, not the whole page
- *   --fonts DIR        fonts from DIR, not the Liberation or system fonts
+ *   --fonts DIR        fonts from DIR, not the Liberation or system fonts;
+ *                      again for fallback fonts (a font pack)
  *   --boxes            print the box tree
  *   --dither           as a 256-colour display shows it
  *
@@ -50,7 +51,8 @@ static void dither_surface(tc_surface *s)
 int main(int argc, char **argv)
 {
     int i, w = 800, h = 600, full = 1, boxes = 0, dither = 0, err;
-    const char *fonts_dir = NULL, *in = NULL, *out = NULL;
+    const char *fonts_dirs[8], *in = NULL, *out = NULL;
+    size_t nfonts = 0;
     tc_font_set *fonts;
     rendered r;
     tc_buf png;
@@ -67,8 +69,8 @@ int main(int argc, char **argv)
             boxes = 1;
         else if (strcmp(argv[i], "--dither") == 0)
             dither = 1;
-        else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc)
-            fonts_dir = argv[++i];
+        else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc && nfonts < TC_ARRAY_LEN(fonts_dirs))
+            fonts_dirs[nfonts++] = argv[++i];
         else if (argv[i][0] == '-' && argv[i][1])
             return usage();
         else if (!in)
@@ -81,7 +83,7 @@ int main(int argc, char **argv)
     if (!in || !out || w <= 0 || h <= 0 || w > 4096)
         return usage();
     tc_style_init();
-    fonts = render_fonts(fonts_dir);
+    fonts = render_fonts(fonts_dirs, nfonts);
     if (!fonts)
         return 2;
     err = render_file(in, fonts, w, h, full, boxes, &r);

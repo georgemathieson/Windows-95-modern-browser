@@ -98,6 +98,21 @@ Section "Desktop shortcut"
   CreateShortcut "$DESKTOP\Tachyon.lnk" "$INSTDIR\TACHYON.EXE"
 SectionEnd
 
+; The font pack (decision 36) isn't inside SETUP.EXE, which must fit on a
+; floppy: it's in FONTS beside it on the CD and in the zip.
+Section "Fonts for other languages" SecFonts
+  CreateDirectory "$INSTDIR\FONTS"
+  CopyFiles /SILENT "$EXEDIR\FONTS\*.*" "$INSTDIR\FONTS" 6700
+SectionEnd
+
+Function .onInit
+  IfFileExists "$EXEDIR\FONTS\*.*" fonts_here
+  ; Read-only and not selected (SF_RO): there's nothing to copy.
+  SectionSetFlags ${SecFonts} 16
+  SectionSetText ${SecFonts} "Fonts for other languages (on the CD)"
+fonts_here:
+FunctionEnd
+
 Function .onInstSuccess
   IfSilent done
   MessageBox MB_YESNO|MB_ICONQUESTION "Tachyon is installed. Start it now?" IDNO done
@@ -118,7 +133,12 @@ Section "Uninstall"
   Delete "$INSTDIR\README.TXT"
   Delete "$INSTDIR\LICENSE.TXT"
   Delete "$INSTDIR\UNINSTAL.EXE"
+  Delete "$INSTDIR\FONTS\WQYMICRO.TTC"
+  Delete "$INSTDIR\FONTS\DEJAVU.TTF"
+  Delete "$INSTDIR\FONTS\DEJAVUB.TTF"
+  Delete "$INSTDIR\FONTS\FONTS.TXT"
   ; Not /r: anything else in the folder is the user's.
+  RMDir "$INSTDIR\FONTS"
   RMDir "$INSTDIR"
 
   Delete "$SMPROGRAMS\Tachyon\Tachyon.lnk"

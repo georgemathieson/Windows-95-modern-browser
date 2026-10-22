@@ -30,7 +30,8 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build mingw-w64 wine wine32:i386 xvfb xauth zip mtools genisoimage nsis fonts-liberation
+            ninja-build mingw-w64 wine wine32:i386 xvfb xauth zip mtools genisoimage nsis fonts-liberation \
+            fonts-wqy-microhei fonts-dejavu-core
       - name: Prepare Wine
         run: wineboot --init && wineserver --wait
       - run: cmake --preset win95 -DTACHYON_WERROR=ON
@@ -90,13 +91,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends wine wine32:i386 unzip fonts-liberation
       - name: Prepare Wine
         run: wineboot --init && wineserver --wait
-      - name: Fetch and render real sites with their style sheets, trusting only Mozilla's roots
+      - name: Fetch and render real sites with their style sheets and the font pack, trusting only Mozilla's roots
         run: |
           cd artifact && unzip -q tachyon-*-win95.zip
           mkdir ../renders
           failed=0
           for url in https://example.com/ \
                      https://en.wikipedia.org/wiki/Windows_95 \
+                     https://ja.wikipedia.org/wiki/Microsoft_Windows_95 \
                      https://news.ycombinator.com/ \
                      https://www.google.com/ \
                      https://github.com/ \
@@ -108,7 +110,7 @@ jobs:
             ok=0
             for attempt in 1 2 3; do
               if wine TACHYON/FETCH.EXE -q --render --fonts 'Z:\usr\share\fonts\truetype\liberation' \
-                   --png "../renders/$name.png" "$url"; then ok=1; break; fi
+                   --fonts 'TACHYON\FONTS' --png "../renders/$name.png" "$url"; then ok=1; break; fi
               sleep 5
             done
             if [ "$ok" = 0 ]; then echo "::error::FETCH.EXE could not load $url"; failed=1; fi

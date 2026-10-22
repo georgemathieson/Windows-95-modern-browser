@@ -11,7 +11,8 @@
  *   --render  load the page as the browser does (style sheets, styles,
  *             layout) and paint it, a screenful at a time, with a summary on
  *             stderr; --width sets the window's width (800), --fonts adds
- *             fonts from a directory, --png writes the whole page as a PNG
+ *             fonts from a directory (again for more, the first preferred),
+ *             --png writes the whole page as a PNG
  *
  * Several URLs are fetched in turn over connections kept open between them.
  * Built for the Linux host (tachyon-fetch) and for Windows 95 (FETCH.EXE),
@@ -76,7 +77,8 @@ static int print_dom(const tc_response *r, int quiet)
 
 typedef struct render_options {
     int width;
-    const char *fonts_dir;
+    const char *fonts_dirs[8];
+    size_t nfonts;
     const char *png;
 } render_options;
 
@@ -114,8 +116,8 @@ static int render_page(const tc_response *r, const tc_fetch_options *opts, const
         fonts = tc_font_set_new();
         if (!fonts)
             return TC_ERR_NOMEM;
-        if (ro->fonts_dir)
-            tc_font_set_add_dir(fonts, ro->fonts_dir);
+        for (i = 0; i < ro->nfonts; i++)
+            tc_font_set_add_dir(fonts, ro->fonts_dirs[i]);
         tc_font_set_add_system(fonts);
         fprintf(stderr, "fetch: %u font faces\n", (unsigned)tc_font_set_count(fonts));
     }
@@ -216,8 +218,8 @@ int main(int argc, char **argv)
             ro.width = atoi(argv[++i]);
             if (ro.width < 100 || ro.width > 4096)
                 return usage();
-        } else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc) {
-            ro.fonts_dir = argv[++i];
+        } else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc && ro.nfonts < TC_ARRAY_LEN(ro.fonts_dirs)) {
+            ro.fonts_dirs[ro.nfonts++] = argv[++i];
         } else if (strcmp(argv[i], "--png") == 0 && i + 1 < argc) {
             ro.png = argv[++i];
         } else if (strcmp(argv[i], "--cacert") == 0 && i + 1 < argc) {

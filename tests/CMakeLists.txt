@@ -46,7 +46,7 @@ add_custom_command(
   VERBATIM)
 
 # Test files (images...) compiled in as C arrays.
-file(GLOB TEST_BLOBS ${CMAKE_CURRENT_SOURCE_DIR}/data/images/*)
+file(GLOB TEST_BLOBS ${CMAKE_CURRENT_SOURCE_DIR}/data/images/* ${CMAKE_CURRENT_SOURCE_DIR}/data/fonts/*)
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/blobs.c
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_blobs.py ${CMAKE_CURRENT_BINARY_DIR}/blobs.c
