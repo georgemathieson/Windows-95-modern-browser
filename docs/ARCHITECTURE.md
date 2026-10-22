@@ -9,7 +9,8 @@ piece will live. It changes as the sprints land.
  +-----------------------------------------------------------------+
  |  src/platform/win32   TACHYON.EXE: windows, menus, input, page  |
  |                       loads on worker threads (loader.c),       |
- |                       blitting; Winsock, threads, entropy        |
+ |                       blitting; Winsock, threads, entropy;      |
+ |                       TACHYON.LOG and crash reports (tw_log.c)  |
  |  src/platform/posix   the same platform functions for Linux     |
  +-----------------------------------------------------------------+
  |  src/core             the engine: portable C99, no OS headers   |
@@ -28,6 +29,7 @@ piece will live. It changes as the sprints land.
  |    tc_inflate         gzip and deflate                          |
  |    tc_entropy         the entropy pool (own SHA-256)            |
  |    tc_surface         32-bit pixels                             |
+ |    tc_log             the log and its ring of recent lines      |
  |    next: css, layout, paint (Sprint 3)                          |
  +-----------------------------------------------------------------+
  |  third_party          Mbed TLS 4.1, zlib; QuickJS-ng (Sprint 5) |
@@ -42,6 +44,13 @@ piece will live. It changes as the sprints land.
   `0x00RRGGBB`), which on Windows wraps a DIB section, so a frame reaches the
   screen with one `BitBlt`. This gives the same output on every Windows
   version and on the host, where reference tests will render pages to PNG.
+- **The log.** `tc_log()` lines go to `TACHYON.LOG`; `tc_trace()` lines,
+  for things too frequent for the disk (every scroll, every tree row
+  drawn), only to a ring of the last 64 lines. When Tachyon crashes,
+  `tw_log.c`'s handler appends a report: the exception, registers, the code
+  addresses on the stack (named by `tools/symbolize.py` with the build's
+  symbols file) and the ring. The next start says on the home page that it
+  crashed.
 - **Text.** Until Sprint 3 the view uses GDI: `TextOutW` for page source and
   the document tree (one of the few Unicode functions that works on
   Windows 95) and ANSI text elsewhere. From Sprint 3, Tachyon rasterises
@@ -136,7 +145,8 @@ tools/win95check/                   import and instruction checker, export lists
 tools/win95exports/                 EXPORTS.EXE: dumps real Windows 95 exports
 tools/gen_*.py                      build-time generators (icon, root certificates, encodings,
                                     character references, URL and HTML tests, fuzz corpus)
-tools/package.sh                    installer, zip, floppy image and ISO for testers
+tools/package.sh                    installer, zip, floppy image, ISO and symbols for testers
+tools/symbolize.py                  names the functions in a crash report from TACHYON.LOG
 tools/installer/                    SETUP.EXE's NSIS script; tools/test_installer.sh tests it
 docs/                               sprint board, testing guide, spikes
 ```

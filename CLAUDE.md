@@ -98,6 +98,17 @@ starts at `id="parsing"`).
 and UBSan (`apt-get install clang libclang-rt-18-dev`). Run it after
 changing the tokenizer or tree builder; crashes land in `build/fuzz/crashes`.
 
+### Crash reports
+
+`TACHYON.LOG` sits next to `TACHYON.EXE` (Help > View Log). When Tachyon
+crashes it appends a report: the exception, registers, the code addresses
+found on the stack and the last 64 log and trace lines. To name the
+functions, run `tools/symbolize.py SYMBOLS TACHYON.LOG` with the
+`tachyon-VERSION-win95-symbols.txt` from the same build (CI's artifact, or
+the release); the log's `build` line gives the commit. Use `tc_log()` for
+events worth keeping and `tc_trace()` for frequent ones, which only reach a
+crash report. `TACHYON.EXE --crash-test` crashes on purpose.
+
 ### Windows-only code paths
 
 The Linux build exercises the core but not `src/platform/win32`. Always run

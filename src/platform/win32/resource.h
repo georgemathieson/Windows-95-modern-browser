@@ -22,6 +22,7 @@
 #define IDM_GO_HOME         1303
 #define IDM_GO_ADDRESS      1304
 #define IDM_HELP_ABOUT      1401
+#define IDM_HELP_LOG        1402
 
 /* Child windows. */
 #define IDC_ADDRESS_LABEL   2001

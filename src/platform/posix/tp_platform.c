@@ -2,10 +2,13 @@
  * and entropy. Only used for tests and host tools. */
 #define _POSIX_C_SOURCE 200809L
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -201,4 +204,51 @@ void tc_entropy_snapshot(void (*add)(const void *data, size_t len))
 const char *tc_entropy_seed_path(void)
 {
     return NULL; /* /dev/urandom is always there */
+}
+
+/* ---- Files and fonts ---- */
+
+void tc_dir_list(const char *dir, const char *suffix, void (*fn)(void *ctx, const char *path), void *ctx)
+{
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    size_t slen = strlen(suffix);
+    if (!d)
+        return;
+    while ((e = readdir(d)) != NULL) {
+        size_t len = strlen(e->d_name);
+        char *path;
+        if (len < slen || strcasecmp(e->d_name + len - slen, suffix) != 0)
+            continue;
+        path = malloc(strlen(dir) + len + 2);
+        if (!path)
+            break;
+        strcpy(path, dir);
+        strcat(path, "/");
+        strcat(path, e->d_name);
+        fn(ctx, path);
+        free(path);
+    }
+    closedir(d);
+}
+
+struct dir_fonts {
+    void (*fn)(void *ctx, const char *path, const char *family, int weight, int italic);
+    void *ctx;
+};
+
+static void font_file(void *ctx, const char *path)
+{
+    struct dir_fonts *d = ctx;
+    d->fn(d->ctx, path, NULL, 0, 0);
+}
+
+/* The host has no Windows fonts: the Liberation fonts stand in for Arial,
+   Times New Roman and Courier New, with the same metrics. */
+void tc_system_fonts(void (*fn)(void *ctx, const char *path, const char *family, int weight, int italic), void *ctx)
+{
+    struct dir_fonts d;
+    d.fn = fn;
+    d.ctx = ctx;
+    tc_dir_list("/usr/share/fonts/truetype/liberation", ".ttf", font_file, &d);
 }

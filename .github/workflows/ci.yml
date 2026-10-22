@@ -50,6 +50,7 @@ jobs:
             dist/*.zip
             dist/*.img
             dist/*.iso
+            dist/*.txt
 
   fuzz:
     name: Fuzz the HTML parser (libFuzzer, ASan, UBSan)
@@ -97,7 +98,7 @@ jobs:
                      https://www.cloudflare.com/ \
                      https://www.bbc.co.uk/news \
                      https://www.yahoo.co.jp/ \
-                     http://neverssl.com/; do
+                     http://example.com/; do
             ok=0
             for attempt in 1 2 3; do
               if wine TACHYON/FETCH.EXE -q --dom "$url"; then ok=1; break; fi
@@ -134,7 +135,8 @@ jobs:
           version=${tag#v}
           notes=docs/releases/$version.md
           files="dist/tachyon-$version-win95-setup.exe dist/tachyon-$version-win95.zip
-                 dist/tachyon-$version-win95.iso dist/tachyon-$version-win95.img"
+                 dist/tachyon-$version-win95.iso dist/tachyon-$version-win95.img
+                 dist/tachyon-$version-win95-symbols.txt"
           for f in $files; do
             if [ ! -f "$f" ]; then echo "::error::no $f: does $tag match the version built? $(ls dist)"; exit 1; fi
           done

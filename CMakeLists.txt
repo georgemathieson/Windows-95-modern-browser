@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(tachyon VERSION 0.2.0 LANGUAGES C)
+project(tachyon VERSION 0.3.0 LANGUAGES C)
 
-set(TACHYON_SPRINT 2)
-set(TACHYON_SPRINT_NAME "HTML5 parser and DOM")
+set(TACHYON_SPRINT 3)
+set(TACHYON_SPRINT_NAME "First Light")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)

@@ -10,6 +10,7 @@ add_executable(tachyon WIN32
   loader.c
   main.c
   shell.c
+  tw_log.c
   view.c
   tachyon.rc
 )
@@ -23,6 +24,13 @@ set_source_files_properties(tachyon.rc PROPERTIES
 
 tachyon_win95_check(tachyon)
 
-# Open the window under Wine and check it paints (needs an X display).
+# Open the window under Wine and check it paints (needs an X display). Both
+# tests write TACHYON.LOG next to TACHYON.EXE, so they take turns.
 add_test(NAME smoke COMMAND tachyon --smoke-test)
-set_tests_properties(smoke PROPERTIES LABELS gui TIMEOUT 60)
+set_tests_properties(smoke PROPERTIES LABELS gui TIMEOUT 60 RESOURCE_LOCK tachyon_log)
+
+# Crash on purpose and check the report in TACHYON.LOG.
+add_test(NAME crash_report
+         COMMAND ${CMAKE_COMMAND} "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" -DTACHYON=$<TARGET_FILE:tachyon>
+                 -P ${PROJECT_SOURCE_DIR}/tests/crash_report.cmake)
+set_tests_properties(crash_report PROPERTIES LABELS gui TIMEOUT 120 RESOURCE_LOCK tachyon_log)

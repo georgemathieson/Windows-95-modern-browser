@@ -13,5 +13,7 @@
 /* When this build was configured (Unix time). A clock earlier than this is
    certainly wrong, which matters because certificates are checked by date. */
 #define TC_BUILD_UNIX     @TACHYON_BUILD_UNIX@LL
+/* The git commit this build was configured from, for crash reports. */
+#define TC_BUILD_COMMIT   "@TACHYON_BUILD_COMMIT@"
 
 #endif

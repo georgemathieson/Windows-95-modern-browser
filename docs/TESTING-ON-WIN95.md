@@ -104,8 +104,10 @@ Open an issue or tell Claude in the session:
 - The emulator or hardware: CPU, RAM, display colour depth.
 - What you did, what you expected, and what happened. Screenshots help
   (Print Screen, then paste into Paint).
-- For a crash, the text of the error dialog. **Details >>** shows the
-  module and address.
+- For a crash, the end of `TACHYON.LOG` (Help > View Log opens it in
+  Notepad; it's in `C:\Program Files\Tachyon`). Its crash report says what
+  Tachyon was doing, down to the tree rows it was drawing. A photo of the
+  screen is fine. Windows' own dialog (**Details >>**) helps too.
 
 ## 6. Optional: check the export lists
 

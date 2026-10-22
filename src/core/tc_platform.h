@@ -53,6 +53,17 @@ void tc_entropy_snapshot(void (*add)(const void *data, size_t len));
 /* Where to keep a random seed between runs, or NULL for none. */
 const char *tc_entropy_seed_path(void);
 
+/* ---- Files and fonts ---- */
+
+/* Call fn with the path of each file in dir whose name ends with suffix
+   (ASCII case-insensitive), in no particular order. */
+void tc_dir_list(const char *dir, const char *suffix, void (*fn)(void *ctx, const char *path), void *ctx);
+
+/* Call fn for each TrueType font installed on the system: its file, and its
+   family, weight and style when the system lists them (family NULL: read
+   them from the file). */
+void tc_system_fonts(void (*fn)(void *ctx, const char *path, const char *family, int weight, int italic), void *ctx);
+
 /* ---- Network: IPv4 TCP ----
  *
  * Every blocking call gives up with TC_ERR_TIMEOUT after timeout_ms and with
