@@ -527,7 +527,7 @@ static void rule_contents(sp *p, const tc_selector_list *sel, const tc_css_value
     for (i = 0; i < count && !p->nomem; i++) {
         const tc_css_rule *r = &items[i].rule;
         if (items[i].type == TC_CSS_ITEM_DECL) {
-            if (tc_decls_add(&p->sheet->arena, &items[i].decl, p->quirks, &decls) != TC_OK)
+            if (tc_decls_add(&p->sheet->arena, &items[i].decl, p->quirks, p->sheet->url, &decls) != TC_OK)
                 p->nomem = 1;
             continue;
         }
@@ -677,7 +677,7 @@ int tc_style_attr_parse(tc_arena *a, const char *text, int quirks, tc_decl **out
         err = TC_ERR_NOMEM;
     for (i = 0; err == TC_OK && i < count; i++)
         if (items[i].type == TC_CSS_ITEM_DECL)
-            err = tc_decls_add(a, &items[i].decl, quirks, &decls);
+            err = tc_decls_add(a, &items[i].decl, quirks, NULL, &decls);
     if (err == TC_OK && decls.len) {
         *out = tc_arena_alloc(a, decls.len * sizeof **out);
         if (*out) {

@@ -1056,22 +1056,87 @@ static int new_context(const tc_box *b)
 static void layout_block(tc_layout *l, tc_box *b, float cbw, float cbh, float forced_w, block_result *res, int depth);
 
 /* A replaced box's size: from its style, or the defaults. */
+/* An <img>'s width and height attributes as an aspect ratio (HTML maps
+   them to aspect-ratio), so the page needn't move when the image arrives.
+   0 if they don't give one. */
+static float attribute_ratio(const tc_element *el)
+{
+    const char *aw = el ? tc_dom_get_attr(el, "width") : NULL, *ah = el ? tc_dom_get_attr(el, "height") : NULL;
+    double w = aw ? atof(aw) : 0, h = ah ? atof(ah) : 0;
+    return w > 0 && h > 0 && w < 1e7 && h < 1e7 ? (float)(w / h) : 0;
+}
+
+/* Min and max sizes for a box with an aspect ratio and no width or height
+   (CSS 2.1 section 10.4's table). */
+static void clamp_ratio(const tc_box *b, float *w, float *h, float cbw, float cbh)
+{
+    const tc_style *s = b->style;
+    float minw = clamp_size(b, 0, &s->min_width, &s->max_width, cbw, 1);
+    float maxw = clamp_size(b, 1e9f, &s->min_width, &s->max_width, cbw, 1);
+    float minh = clamp_size(b, 0, &s->min_height, &s->max_height, cbh, 0);
+    float maxh = clamp_size(b, 1e9f, &s->min_height, &s->max_height, cbh, 0);
+    float W = *w, H = *h;
+    if (W <= 0 || H <= 0)
+        return;
+    maxw = TC_MAX(minw, maxw);
+    maxh = TC_MAX(minh, maxh);
+    if (W > maxw && H > maxh) {
+        if (maxw / W <= maxh / H)
+            *w = maxw, *h = TC_MAX(minh, maxw * H / W);
+        else
+            *w = TC_MAX(minw, maxh * W / H), *h = maxh;
+    } else if (W < minw && H < minh) {
+        if (minw / W <= minh / H)
+            *w = TC_MIN(maxw, minh * W / H), *h = minh;
+        else
+            *w = minw, *h = TC_MIN(maxh, minw * H / W);
+    } else if (W < minw && H > maxh) {
+        *w = minw, *h = maxh;
+    } else if (W > maxw && H < minh) {
+        *w = maxw, *h = minh;
+    } else if (W > maxw) {
+        *w = maxw, *h = TC_MAX(maxw * H / W, minh);
+    } else if (W < minw) {
+        *w = minw, *h = TC_MIN(minw * H / W, maxh);
+    } else if (H > maxh) {
+        *w = TC_MAX(maxh * W / H, minw), *h = maxh;
+    } else if (H < minh) {
+        *w = TC_MIN(minh * W / H, maxw), *h = minh;
+    }
+}
+
 static void layout_replaced(tc_layout *l, tc_box *b, float cbw, float cbh)
 {
     const tc_style *s = b->style;
-    float w, h, dw = 300, dh = 150;
+    float w, h, dw = 300, dh = 150, ratio = 0; /* the default size, and width / height */
+    int auto_w, auto_h;
     box_model(b, cbw);
+    w = content_size(b, &s->width, cbw, 1);
+    h = content_size(b, &s->height, cbh, 0);
+    auto_w = w < 0, auto_h = h < 0;
     switch (b->replaced) {
-    case TC_REPLACED_IMAGE:
-        dw = dh = 0;
-        if (b->len) {
-            /* No picture until Sprint 4: its alternative text in its place. */
-            const tc_font *f = tc_layout_font(l, s);
-            const tc_font_metrics *m = tc_font_get_metrics(f);
-            dw = tc_font_measure(f, b->text, b->len, 0) + 4;
-            dh = m->ascent + m->descent + 4;
+    case TC_REPLACED_IMAGE: {
+        float density = 1;
+        tc_image *img = b->element && l->images.element
+                            ? l->images.element(l->images.ctx, b->element, auto_w || auto_h, &density)
+                            : NULL;
+        if (img && density > 0) {
+            dw = tc_image_width(img) / density;
+            dh = tc_image_height(img) / density;
+            ratio = dw / dh;
+        } else {
+            ratio = attribute_ratio(b->element);
+            dw = dh = 0;
+            if (b->len) {
+                /* Not here (yet): its alternative text in its place. */
+                const tc_font *f = tc_layout_font(l, s);
+                const tc_font_metrics *m = tc_font_get_metrics(f);
+                dw = tc_font_measure(f, b->text, b->len, 0) + 4;
+                dh = m->ascent + m->descent + 4;
+            }
         }
         break;
+    }
     case TC_REPLACED_TEXT_FIELD: {
         const tc_font_metrics *m = tc_font_get_metrics(tc_layout_font(l, s));
         const char *size = b->element ? tc_dom_get_attr(b->element, "size") : NULL;
@@ -1095,18 +1160,25 @@ static void layout_replaced(tc_layout *l, tc_box *b, float cbw, float cbh)
         }
         break;
     }
-    w = content_size(b, &s->width, cbw, 1);
-    h = content_size(b, &s->height, cbh, 0);
-    if (w < 0 && h < 0) {
+    if (auto_w && auto_h) {
         w = dw;
         h = dh;
-    } else if (w < 0) {
-        w = dh > 0 && b->replaced == TC_REPLACED_IMAGE && !b->len ? h : dw;
-    } else if (h < 0) {
-        h = dw > 0 && b->replaced == TC_REPLACED_IMAGE && !b->len ? w : dh;
+        if (ratio > 0 && dh > 0)
+            clamp_ratio(b, &w, &h, cbw, cbh);
+        else {
+            w = clamp_size(b, w, &s->min_width, &s->max_width, cbw, 1);
+            h = clamp_size(b, h, &s->min_height, &s->max_height, cbh, 0);
+        }
+    } else if (auto_h) {
+        w = clamp_size(b, w, &s->min_width, &s->max_width, cbw, 1);
+        h = clamp_size(b, ratio > 0 ? w / ratio : dh, &s->min_height, &s->max_height, cbh, 0);
+    } else if (auto_w) {
+        h = clamp_size(b, h, &s->min_height, &s->max_height, cbh, 0);
+        w = clamp_size(b, ratio > 0 ? h * ratio : dw, &s->min_width, &s->max_width, cbw, 1);
+    } else {
+        w = clamp_size(b, w, &s->min_width, &s->max_width, cbw, 1);
+        h = clamp_size(b, h, &s->min_height, &s->max_height, cbh, 0);
     }
-    w = clamp_size(b, w, &s->min_width, &s->max_width, cbw, 1);
-    h = clamp_size(b, h, &s->min_height, &s->max_height, cbh, 0);
     b->w = w + mbp_h(b);
     b->h = h + mbp_v(b);
     b->baseline = b->replaced == TC_REPLACED_TEXT_FIELD
@@ -1342,8 +1414,8 @@ static void layout_block(tc_layout *l, tc_box *b, float cbw, float cbh, float fo
 
 /* ---- The document ---- */
 
-int tc_layout_document(const tc_document *doc, const tc_styled *styled, tc_font_set *fonts, float w, float h,
-                       tc_layout **out)
+int tc_layout_document(const tc_document *doc, const tc_styled *styled, tc_font_set *fonts,
+                       const tc_image_source *images, float w, float h, tc_layout **out)
 {
     tc_layout *l;
     block_result r;
@@ -1355,6 +1427,8 @@ int tc_layout_document(const tc_document *doc, const tc_styled *styled, tc_font_
     l->doc = doc;
     l->styled = styled;
     l->fonts = fonts;
+    if (images)
+        l->images = *images;
     l->vw = w;
     l->vh = h;
     if (tc_box_build(l) != TC_OK) {

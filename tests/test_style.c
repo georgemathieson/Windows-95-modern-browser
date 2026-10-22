@@ -449,6 +449,121 @@ static void test_nesting(void)
     page_free(&p);
 }
 
+static void test_backgrounds(void)
+{
+    page p;
+    const tc_style *s;
+    const tc_bg_layer *l;
+    tc_stylesheet *sheet;
+    const char *css = "#a { background: url(img/a.png) no-repeat right 10px top / 20px auto,"
+                      " linear-gradient(to right, red, blue 80%) #eee }";
+    page_load(&p, "<!DOCTYPE html><style>@import 'x.css';"
+                  "#b { background: url('b.gif') center / cover repeat-x content-box }"
+                  "#c { background-image: none, url(c.png); background-position: left 5px bottom 2px, 30% }"
+                  "#d { list-style: square url(dot.png) inside; object-fit: cover; object-position: right bottom }"
+                  "#e { background: red, blue } #f { background-image: -webkit-linear-gradient(top, red, blue) }"
+                  "#g { background-image: linear-gradient(to top right, red 10%, currentcolor 20% 30%); color: lime }"
+                  "#h { background-image: linear-gradient(45deg, red) }"
+                  "#i { background-position: center left 10px }"
+                  "</style>"
+                  "<p id=a>a</p><p id=b>b</p><p id=c>c</p><ul><li id=d>d</ul><p id=e style='background-color: green'>e"
+                  "<p id=f>f<p id=g>g<p id=h>h<p id=i style='background-image: url(i.png)'>i");
+    if (p.count == 1 && tc_stylesheet_import_count(p.sources[0].sheet) == 1) {
+        sheet = tc_stylesheet_parse(css, strlen(css), TC_ORIGIN_AUTHOR, 0, "http://example.com/css/x.css");
+        tc_stylesheet_set_import(p.sources[0].sheet, 0, sheet);
+        page_style(&p, 800);
+    }
+    s = style(&p, "a");
+    CHECK_COLOR(s->background_color, 0xFFEEEEEE);
+    TC_CHECK(s->backgrounds && s->backgrounds->count == 2);
+    if (s->backgrounds && s->backgrounds->count == 2) {
+        l = &s->backgrounds->layers[0];
+        TC_CHECK(l->image && l->image->type == TC_CSS_IMAGE_URL);
+        if (l->image) {
+            TC_CHECK_STR(l->image->url, "img/a.png");
+            TC_CHECK_STR(l->image->base ? l->image->base : "", "http://example.com/css/x.css");
+        }
+        TC_CHECK_INT(l->repeat_x, TC_BG_NO_REPEAT);
+        TC_CHECK_INT(l->repeat_y, TC_BG_NO_REPEAT);
+        CHECK_PX(l->x.pct, 100);
+        CHECK_PX(l->x.px, -10);
+        CHECK_PX(l->y.pct, 0);
+        TC_CHECK_INT(l->width.kind, TC_SIZE_LENGTH);
+        CHECK_PX(l->width.length.px, 20);
+        TC_CHECK_INT(l->height.kind, TC_SIZE_AUTO);
+        TC_CHECK_INT(l->origin, TC_BG_PADDING_BOX);
+        TC_CHECK_INT(l->clip, TC_BG_BORDER_BOX);
+        l = &s->backgrounds->layers[1];
+        TC_CHECK(l->image && l->image->type == TC_CSS_IMAGE_LINEAR);
+        if (l->image && l->image->nstops == 2) {
+            CHECK_PX(l->image->angle, 90);
+            CHECK_COLOR(l->image->stops[0].color, 0xFFFF0000);
+            TC_CHECK(!l->image->stops[0].has_position);
+            CHECK_PX(l->image->stops[1].position.pct, 80);
+        } else {
+            TC_CHECK(0);
+        }
+    }
+    s = style(&p, "b");
+    TC_CHECK(s->backgrounds && s->backgrounds->count == 1);
+    if (s->backgrounds) {
+        l = &s->backgrounds->layers[0];
+        TC_CHECK(l->image && !l->image->base);
+        TC_CHECK_INT(l->size, TC_BG_COVER);
+        CHECK_PX(l->x.pct, 50);
+        CHECK_PX(l->y.pct, 50);
+        TC_CHECK_INT(l->repeat_x, TC_BG_REPEAT);
+        TC_CHECK_INT(l->repeat_y, TC_BG_NO_REPEAT);
+        TC_CHECK_INT(l->origin, TC_BG_CONTENT_BOX);
+        TC_CHECK_INT(l->clip, TC_BG_CONTENT_BOX);
+    }
+    s = style(&p, "c");
+    TC_CHECK(s->backgrounds && s->backgrounds->count == 2);
+    if (s->backgrounds && s->backgrounds->count == 2) {
+        TC_CHECK(s->backgrounds->layers[0].image == NULL);
+        l = &s->backgrounds->layers[1];
+        CHECK_PX(l->x.pct, 30); /* the positions repeat: the second layer gets the second */
+        CHECK_PX(l->y.pct, 50);
+        CHECK_PX(s->backgrounds->layers[0].x.px, 5);
+        CHECK_PX(s->backgrounds->layers[0].y.pct, 100);
+        CHECK_PX(s->backgrounds->layers[0].y.px, -2);
+    }
+    s = style(&p, "d");
+    TC_CHECK(s->list_style_image && s->list_style_image->url && !strcmp(s->list_style_image->url, "dot.png"));
+    TC_CHECK_INT(s->list_style_type, TC_LIST_SQUARE);
+    TC_CHECK_INT(s->object_fit, TC_FIT_COVER);
+    CHECK_PX(s->object_position[0].pct, 100);
+    CHECK_PX(s->object_position[1].pct, 100);
+    CHECK_PX(style(&p, "a")->object_position[0].pct, 50);
+    s = style(&p, "e"); /* a colour before the last layer: invalid */
+    TC_CHECK(s->backgrounds == NULL);
+    CHECK_COLOR(s->background_color, 0xFF008000);
+    s = style(&p, "f");
+    TC_CHECK(s->backgrounds && s->backgrounds->layers[0].image &&
+             s->backgrounds->layers[0].image->angle == 180);
+    s = style(&p, "g");
+    if (s->backgrounds && s->backgrounds->layers[0].image) {
+        const tc_css_image *g = s->backgrounds->layers[0].image;
+        TC_CHECK_INT(g->corner, TC_CORNER_TOP | TC_CORNER_RIGHT);
+        TC_CHECK_INT(g->nstops, 3); /* a stop with two positions is two stops */
+        if (g->nstops == 3) {
+            CHECK_COLOR(g->stops[1].color, 0xFF00FF00);
+            CHECK_PX(g->stops[2].position.pct, 30);
+        }
+    } else {
+        TC_CHECK(0);
+    }
+    TC_CHECK(style(&p, "h")->backgrounds == NULL); /* one stop isn't a gradient */
+    s = style(&p, "i");
+    if (s->backgrounds) {
+        CHECK_PX(s->backgrounds->layers[0].x.px, 10);
+        CHECK_PX(s->backgrounds->layers[0].y.pct, 50);
+    } else {
+        TC_CHECK(0);
+    }
+    page_free(&p);
+}
+
 static void test_huge_font_sizes(void)
 {
     page p;
@@ -688,6 +803,7 @@ void tc_suite_style(void)
     TC_RUN(test_layers);
     TC_RUN(test_nesting);
     TC_RUN(test_huge_font_sizes);
+    TC_RUN(test_backgrounds);
     TC_RUN(test_revert_and_all);
     TC_RUN(test_blockify);
     TC_RUN(test_hints);

@@ -114,6 +114,49 @@ typedef struct tc_content {
 } tc_content;
 enum { TC_GENERATED_NORMAL, TC_GENERATED_NONE, TC_GENERATED_ITEMS };
 
+/* An image a style names: url() or a gradient. */
+enum { TC_CSS_IMAGE_URL, TC_CSS_IMAGE_LINEAR };
+typedef struct tc_color_stop {
+    uint32_t color;           /* 0xAARRGGBB */
+    uint8_t currentcolor;     /* as declared: currentcolor (resolved when computed) */
+    uint8_t has_position;
+    const tc_calc *declared;  /* as declared: the position */
+    tc_length position;       /* computed: along the gradient line, percentages of its length */
+} tc_color_stop;
+typedef struct tc_css_image {
+    uint8_t type;             /* TC_CSS_IMAGE_* */
+    uint8_t repeating;        /* repeating-linear-gradient() */
+    uint8_t corner;           /* "to top right" and the like: TC_CORNER_* bits; 0 for an angle */
+    const char *url;          /* TC_CSS_IMAGE_URL: as written */
+    const char *base;         /* the style sheet's URL it's relative to; NULL for the document's */
+    float angle;              /* gradients: degrees clockwise from upwards (180: downwards) */
+    uint32_t nstops;
+    const tc_color_stop *stops;
+} tc_css_image;
+#define TC_CORNER_TOP    1u
+#define TC_CORNER_RIGHT  2u
+#define TC_CORNER_BOTTOM 4u
+#define TC_CORNER_LEFT   8u
+
+/* Background layers: images with their repeat, position, size and boxes. */
+enum { TC_BG_REPEAT, TC_BG_NO_REPEAT, TC_BG_SPACE, TC_BG_ROUND };
+enum { TC_BG_BORDER_BOX, TC_BG_PADDING_BOX, TC_BG_CONTENT_BOX };
+enum { TC_BG_SIZE, TC_BG_COVER, TC_BG_CONTAIN };
+typedef struct tc_bg_layer {
+    const tc_css_image *image;
+    uint8_t repeat_x, repeat_y; /* TC_BG_REPEAT... */
+    uint8_t origin, clip;       /* TC_BG_*_BOX */
+    uint8_t size;               /* TC_BG_SIZE (width and height), TC_BG_COVER, TC_BG_CONTAIN */
+    tc_size width, height;      /* auto or a length-percentage */
+    tc_length x, y;             /* position: percentages of (area - image) */
+} tc_bg_layer;
+typedef struct tc_backgrounds {
+    uint32_t count;
+    const tc_bg_layer *layers;  /* the first is on top */
+} tc_backgrounds;
+
+enum { TC_FIT_FILL, TC_FIT_CONTAIN, TC_FIT_COVER, TC_FIT_NONE, TC_FIT_SCALE_DOWN };
+
 typedef struct tc_custom_props tc_custom_props;
 
 typedef struct tc_style {
@@ -137,6 +180,9 @@ typedef struct tc_style {
     uint8_t content_kind;         /* TC_GENERATED_* */
     const tc_content *content;    /* TC_GENERATED_ITEMS: the items, attr() resolved */
     int z_index;
+    const tc_backgrounds *backgrounds; /* background images; NULL for none */
+    uint8_t object_fit;           /* TC_FIT_* */
+    tc_length object_position[2];
 
     /* Inherited. */
     uint32_t color;
@@ -156,6 +202,7 @@ typedef struct tc_style {
     tc_length text_indent;
     float letter_spacing, word_spacing; /* px */
     const char *list_style_string;      /* TC_LIST_STRING */
+    const tc_css_image *list_style_image; /* NULL for none */
 
     /* Text decorations in force from this element and its ancestors. */
     uint8_t decorations;

@@ -53,4 +53,9 @@ void tc_surface_gradient_v(tc_surface *s, tc_rect r, tc_color top, tc_color bott
 /* Blend src over dst (0x00RRGGBB) with src's alpha. */
 uint32_t tc_color_blend(uint32_t dst, tc_color src);
 
+/* Draw an image (pixels premultiplied 0xAARRGGBB, as tc_image decodes
+   them) scaled to the rectangle dst, inside clip: bilinear, or averaged
+   where it shrinks to less than half its size. */
+void tc_surface_draw_image(tc_surface *s, tc_rect clip, const tc_surface *image, tc_rect dst);
+
 #endif

@@ -55,7 +55,7 @@ static int lay_out(laid *l, const char *body, float width)
         err = tc_style_document(l->doc, l->sources, l->count, &env, NULL, &l->styled);
     l->fonts = tc_font_set_new();
     if (!err)
-        err = l->fonts ? tc_layout_document(l->doc, l->styled, l->fonts, width, 300, &l->layout) : TC_ERR_NOMEM;
+        err = l->fonts ? tc_layout_document(l->doc, l->styled, l->fonts, NULL, width, 300, &l->layout) : TC_ERR_NOMEM;
     return err;
 }
 

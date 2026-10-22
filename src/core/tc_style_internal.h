@@ -38,6 +38,14 @@
     X(BORDER_BOTTOM_COLOR, "border-bottom-color", 0, T_COLOR, NULL)    \
     X(BORDER_LEFT_COLOR, "border-left-color", 0, T_COLOR, NULL)        \
     X(BACKGROUND_COLOR, "background-color", 0, T_COLOR, NULL)          \
+    X(BACKGROUND_IMAGE, "background-image", 0, T_BG_IMAGE, NULL)       \
+    X(BACKGROUND_REPEAT, "background-repeat", 0, T_BG_REPEAT, NULL)    \
+    X(BACKGROUND_POSITION, "background-position", 0, T_BG_POSITION, NULL) \
+    X(BACKGROUND_SIZE, "background-size", 0, T_BG_SIZE, NULL)          \
+    X(BACKGROUND_ORIGIN, "background-origin", 0, T_BG_BOX, NULL)       \
+    X(BACKGROUND_CLIP, "background-clip", 0, T_BG_BOX, NULL)           \
+    X(OBJECT_FIT, "object-fit", 0, T_KEYWORD, kw_object_fit)           \
+    X(OBJECT_POSITION, "object-position", 0, T_POSITION, NULL)         \
     X(WIDTH, "width", 0, T_SIZE, NULL)                                 \
     X(HEIGHT, "height", 0, T_SIZE, NULL)                               \
     X(MIN_WIDTH, "min-width", 0, T_SIZE, NULL)                         \
@@ -67,6 +75,7 @@
     X(VISIBILITY, "visibility", 1, T_KEYWORD, kw_visibility)           \
     X(LIST_STYLE_TYPE, "list-style-type", 1, T_LIST_STYLE_TYPE, kw_list_style) \
     X(LIST_STYLE_POSITION, "list-style-position", 1, T_KEYWORD, kw_list_position) \
+    X(LIST_STYLE_IMAGE, "list-style-image", 1, T_IMAGE, NULL)          \
     X(OVERFLOW_WRAP, "overflow-wrap", 1, T_KEYWORD, kw_overflow_wrap)  \
     X(WORD_BREAK, "word-break", 1, T_KEYWORD, kw_word_break)           \
     X(CURSOR, "cursor", 1, T_CURSOR, kw_cursor)                        \
@@ -125,6 +134,30 @@ typedef struct tc_pval {
     const void *ptr;
 } tc_pval;
 
+/* A position (background-position, object-position) as declared: offsets
+   from the left or right, and from the top or bottom. */
+typedef struct tc_position {
+    uint8_t far_x, far_y;      /* measured from the right, from the bottom */
+    const tc_calc *x, *y;      /* the offsets; NULL for 0 */
+} tc_position;
+
+/* background-size for one layer, as declared. */
+typedef struct tc_bg_size_decl {
+    uint8_t kind;              /* TC_BG_SIZE, TC_BG_COVER, TC_BG_CONTAIN */
+    const tc_calc *w, *h;      /* TC_BG_SIZE: NULL for auto */
+} tc_bg_size_decl;
+
+/* A background longhand as declared: one entry per layer (comma), in the
+   member its property uses. */
+typedef struct tc_bg_list {
+    uint32_t count;
+    const tc_css_image **images;  /* NULL entries: none */
+    uint8_t (*repeat)[2];
+    uint8_t *boxes;               /* origin, clip */
+    tc_position *positions;
+    tc_bg_size_decl *sizes;
+} tc_bg_list;
+
 typedef struct tc_tokens {
     const tc_css_value *v;
     uint32_t n;
@@ -135,6 +168,7 @@ typedef struct tc_tokens {
 typedef struct tc_var_value {
     tc_tokens tokens;
     uint16_t prop;
+    const char *base;  /* the style sheet's URL, for url()s (NULL: the document's) */
 } tc_var_value;
 
 typedef struct tc_decl {
@@ -151,15 +185,16 @@ typedef struct tc_decl_vec {
 } tc_decl_vec;
 
 /* Parse one declaration into longhand declarations appended to out (none
-   if it's invalid or unknown). quirks: unitless lengths are pixels. Values
-   live in a. TC_OK or TC_ERR_NOMEM. */
-int tc_decls_add(tc_arena *a, const tc_css_decl *d, int quirks, tc_decl_vec *out);
+   if it's invalid or unknown). quirks: unitless lengths are pixels. base:
+   the style sheet's URL, which its url()s are relative to (NULL: the
+   document's). Values live in a. TC_OK or TC_ERR_NOMEM. */
+int tc_decls_add(tc_arena *a, const tc_css_decl *d, int quirks, const char *base, tc_decl_vec *out);
 void tc_decls_free(tc_decl_vec *v);
 
 /* Parse a value (var() substituted) of prop, a longhand or a shorthand,
    into its longhands' values: returns how many, or 0 if it's invalid. */
-uint32_t tc_prop_parse(tc_arena *a, uint16_t prop, const tc_css_value *v, uint32_t n, int quirks, uint16_t *props,
-                       tc_pval *vals);
+uint32_t tc_prop_parse(tc_arena *a, uint16_t prop, const tc_css_value *v, uint32_t n, int quirks, const char *base,
+                       uint16_t *props, tc_pval *vals);
 
 /* Whether a declaration of name: value would be accepted (for @supports). */
 int tc_prop_supported(tc_arena *a, const char *name, const tc_css_value *v, uint32_t n);

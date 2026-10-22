@@ -291,10 +291,166 @@ static void test_png(void)
     tc_surface_free(&s);
 }
 
+/* Images served from the test files: the URL's last part is the file. */
+typedef struct image_server {
+    char asked[1024];
+    unsigned count;
+} image_server;
+
+static int serve_image(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size)
+{
+    image_server *s = ctx;
+    const char *name = strrchr(url, '/');
+    size_t i;
+    (void)charset_size;
+    charset[0] = '\0';
+    s->count++;
+    if (strlen(s->asked) + strlen(url) + 2 < sizeof s->asked) {
+        strcat(s->asked, url);
+        strcat(s->asked, " ");
+    }
+    name = name ? name + 1 : url;
+    for (i = 0; i < tc_test_blob_count; i++)
+        if (strcmp(tc_test_blobs[i].name, name) == 0)
+            return tc_buf_append(body, tc_test_blobs[i].data, tc_test_blobs[i].len);
+    return TC_ERR_INVALID;
+}
+
+static int image_index_of(const tc_page *p, const char *url)
+{
+    size_t i;
+    for (i = 0; i < tc_page_image_count(p); i++)
+        if (strcmp(tc_page_image_url(p, i), url) == 0)
+            return (int)i;
+    return -1;
+}
+
+static void test_image_sources(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    tc_page p;
+    PAGE_FROM(&p, "http://example.com/dir/page.html",
+              "<!DOCTYPE html><style>#bg { background: url(/css/bg.png), url(data:image/gif;base64,"
+              "R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=) } li { list-style-image: url('dot.png') }</style>"
+              "<img id=a src=a.png>"
+              "<img id=b srcset='b1.png 1x, b2.png 2x' src=b0.png>"
+              "<img id=c srcset='c-small.png 200w, c-big.png 800w, c-huge.png 1600w' sizes='(max-width: 300px) 100vw, 50vw'>"
+              "<picture><source srcset=d.avif type=image/avif><source srcset=d.webp type=image/webp media='(min-width: 2000px)'>"
+              "<source srcset='d.webp 1x' type='image/webp; codecs=vp8'><img id=d src=d.jpg></picture>"
+              "<img id=e srcset='e,1.png 1x,e2.png 2x'>"
+              "<input type=image src=f.png><div id=bg></div><ul><li>x</ul>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/a.png") >= 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/b1.png") >= 0);   /* 1x for a 1x display */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/b0.png") < 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/c-small.png") >= 0); /* 50vw = 200px: 200w is 1x */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/c-big.png") < 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/d.webp") >= 0);    /* avif isn't supported; the media fails */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/d.jpg") < 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/e,1.png") >= 0);   /* a comma inside a URL */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/f.png") >= 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/css/bg.png") >= 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/dot.png") >= 0);
+    /* The data: URL is decoded straight away. */
+    TC_CHECK_INT(tc_page_image_state(&p, (size_t)image_index_of(&p, "data:image/gif;base64,"
+                                                                   "R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=")),
+                 TC_PAGE_IMAGE_LOADED);
+    TC_CHECK_INT(tc_page_image_state(&p, (size_t)image_index_of(&p, "http://example.com/dir/a.png")),
+                 TC_PAGE_IMAGE_WAITING);
+    tc_page_free(&p);
+    /* At 280px, sizes says 100vw: 200w is under 1x, so 800w (about 2.9x).
+       At 100px, 200w is 2x and wins. */
+    PAGE_FROM(&p, "http://example.com/", "<img srcset='s.png 200w, m.png 800w' sizes='(max-width: 300px) 100vw, 50vw'>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 280, 300), TC_OK);
+    TC_CHECK(image_index_of(&p, "http://example.com/m.png") >= 0);
+    tc_page_free(&p);
+    PAGE_FROM(&p, "http://example.com/", "<img srcset='s.png 200w, m.png 800w' sizes='(max-width: 300px) 100vw, 50vw'>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 100, 300), TC_OK);
+    TC_CHECK(image_index_of(&p, "http://example.com/s.png") >= 0);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+static void test_image_loading(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    tc_surface s;
+    float x, y;
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/",
+              "<!DOCTYPE html><style>body { margin: 0 } img { display: block }</style>"
+              "<img id=a src=pattern.png><img id=b src=pattern.png width=8 height=4><img id=c src=missing.png alt=x>"
+              "<div id=d style='height: 10px; background: url(halves.jpg) no-repeat'></div>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_image_count(&p), 3);
+    /* Before the images: #a has no size yet, #b has its attributes'. */
+    TC_CHECK(tc_page_fragment(&p, "c", &x, &y));
+    TC_CHECK(y == 4);
+    TC_CHECK_INT(tc_page_load_images(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    TC_CHECK_INT(srv.count, 3);
+    TC_CHECK_INT(tc_page_image_state(&p, (size_t)image_index_of(&p, "http://example.com/missing.png")),
+                 TC_PAGE_IMAGE_FAILED);
+    /* Laid out again: #a is 4x2 now. */
+    TC_CHECK(tc_page_fragment(&p, "c", &x, &y));
+    TC_CHECK(y == 6);
+    /* Painted: the pattern's red corner, and the JPEG behind #d. */
+    if (tc_surface_init(&s, 40, 40) == TC_OK) {
+        tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 0);
+        TC_CHECK_INT(tc_surface_get(&s, 0, 0), 0xFF0000);
+        TC_CHECK_INT(tc_surface_get(&s, 0, 2) & 0xFFFFFF, 0xFF0000); /* #b, 8x4: its red pixel doubled */
+        tc_surface_free(&s);
+    }
+    tc_page_free(&p);
+
+    /* An arrival only asks for a new layout when layout waited for it. */
+    PAGE_FROM(&p, "http://example.com/", "<img src=a.png width=10 height=10><img src=b.png>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    if (tc_page_image_count(&p) == 2) {
+        const tc_test_blob *png = tc_test_blob_get("pattern.png");
+        tc_image *img = NULL;
+        TC_CHECK_INT(tc_image_new(png->data, png->len, &img), TC_OK);
+        TC_CHECK_INT(tc_page_image_arrived(&p, 0, img), 0);
+        img = NULL;
+        TC_CHECK_INT(tc_image_new(png->data, png->len, &img), TC_OK);
+        TC_CHECK_INT(tc_page_image_arrived(&p, 1, img), 1);
+        TC_CHECK_INT(tc_page_image_arrived(&p, 1, NULL), 0); /* twice: ignored */
+    }
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+static void test_image_memory(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    tc_surface s;
+    memset(&srv, 0, sizeof srv);
+    /* Room for one 32x32 image's pixels at a time. */
+    PAGE_FROM(&p, "http://example.com/", "<!DOCTYPE html><style>body { margin: 0 }</style>"
+                                         "<img src=halves.jpg><img src=halves-progressive.jpg>");
+    tc_page_set_image_memory(&p, 32 * 32 * 4 + 100);
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_load_images(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    if (tc_surface_init(&s, 100, 40) == TC_OK) {
+        tc_paint(p.layout, &s, tc_rect_make(0, 0, 100, 40), 0, 0);
+        TC_CHECK((tc_surface_get(&s, 4, 20) & 0xFF0000) > 0xC00000);  /* the first was drawn... */
+        TC_CHECK((tc_surface_get(&s, 36, 20) & 0xFF0000) > 0xC00000); /* ...then the second */
+        tc_surface_free(&s);
+    }
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
 void tc_suite_page(void)
 {
     TC_RUN(test_style_sheets);
     TC_RUN(test_import_limits);
     TC_RUN(test_links_and_fragments);
     TC_RUN(test_png);
+    TC_RUN(test_image_sources);
+    TC_RUN(test_image_loading);
+    TC_RUN(test_image_memory);
 }

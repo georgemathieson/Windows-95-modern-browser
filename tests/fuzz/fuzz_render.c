@@ -25,6 +25,9 @@ static const char fixed_page[] =
     "<form><input value=v><input type=checkbox checked><select><option>o</select>"
     "<textarea>t</textarea><button>b</button></form>"
     "<img alt=alt width=20 height=10><iframe></iframe><hr><center>centred</center>"
+    "<img id=pic src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqChYJAC0Ox+VcAAAAHUlEQVQI1y3EsQEAMAzDIPx5P1eWMrBoYSmg3ysdukELeS2aDPQAAAAASUVORK5CYII='>"
+    "<div class=pics style='background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqChYJAC0Ox+VcAAAAHUlEQVQI1y3EsQEAMAzDIPx5P1eWMrBoYSmg3ysdukELeS2aDPQAAAAASUVORK5CYII=) 3px 50% / 7px repeat-x, "
+    "linear-gradient(45deg, red, blue 40%, lime)'>tiled</div>"
     "<div hidden>hidden</div><span dir=rtl>\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D</span> caf\xC3\xA9 \xE2\x80\x94 "
     "\xF0\x9F\x98\x80<details><summary>s</summary>d</details><svg><circle/></svg>"
     "</body></html>";

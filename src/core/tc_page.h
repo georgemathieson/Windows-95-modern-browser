@@ -25,11 +25,14 @@ typedef struct tc_page {
     tc_layout *layout;
     float width, height;        /* the viewport it's laid out for */
     unsigned style_ms, layout_ms;
+    struct tc_page_images *images; /* its pictures: see tc_page_image_* */
 } tc_page;
 
 /* A tc_page_fetch_fn over HTTP: ctx is the tc_fetch_options to use (its
-   pool and cache too). Only a 200 response that isn't HTML counts. */
+   pool and cache too). Only a 200 response that isn't HTML counts. The
+   first asks for style sheets, the second for images. */
 int tc_page_fetch_http(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size);
+int tc_page_fetch_image_http(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size);
 
 /* Start a page from a parsed document (taken over: html is left empty). */
 int tc_page_init(tc_page *p, const char *url, tc_html_page *html);
@@ -41,8 +44,31 @@ int tc_page_load_styles(tc_page *p, tc_page_fetch_fn fetch, void *ctx,
                         void (*progress)(void *ctx, unsigned n, const char *url));
 
 /* Compute styles for a viewport of w x h (media queries) and lay out. Run
-   again when the viewport changes size. */
+   again when the viewport changes size, or when an image it waited for
+   arrives. It finds the page's pictures too. */
 int tc_page_layout(tc_page *p, tc_font_set *fonts, float w, float h);
+
+/* ---- Pictures ---- */
+
+/* The pictures a page shows: each <img>'s chosen source (srcset, sizes,
+   <picture>) and the url()s in its styles, by absolute URL, in the order
+   the document first uses them. data: URLs are decoded as they're found. */
+enum { TC_PAGE_IMAGE_WAITING, TC_PAGE_IMAGE_LOADED, TC_PAGE_IMAGE_FAILED };
+size_t tc_page_image_count(const tc_page *p);
+const char *tc_page_image_url(const tc_page *p, size_t i);
+int tc_page_image_state(const tc_page *p, size_t i);
+/* An image arrived (taken over), or failed to load (NULL). Returns 1 if
+   the page must be laid out again, because layout waited for its size. */
+int tc_page_image_arrived(tc_page *p, size_t i, tc_image *img);
+/* Fetch and decode the header of every picture still waiting, laying out
+   again (at the last size) if any were waited for. For the tools and
+   tests; the browser loads them as tc_page_image_arrived describes. */
+int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, void *ctx,
+                        void (*progress)(void *ctx, unsigned n, const char *url));
+/* Decoded pictures are kept within this many bytes, those least recently
+   drawn dropped first (default 16 MB). An image bigger than a quarter of
+   it isn't drawn. */
+void tc_page_set_image_memory(tc_page *p, size_t bytes);
 
 /* The link at a point in the document: the a or area element with an href,
    and its URL (free it with tc_url_free). NULL if there's none. */

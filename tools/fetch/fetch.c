@@ -86,6 +86,13 @@ static void sheet_progress(void *ctx, unsigned n, const char *url)
     fprintf(stderr, "fetch: style sheet %u: %.150s\n", n, url);
 }
 
+static void image_progress(void *ctx, unsigned n, const char *url)
+{
+    (void)ctx;
+    if (n <= 3)
+        fprintf(stderr, "fetch: image %u: %.150s\n", n, url);
+}
+
 /* Load the page as the browser does, and paint it a screenful at a time. */
 static int render_page(const tc_response *r, const tc_fetch_options *opts, const render_options *ro)
 {
@@ -98,6 +105,8 @@ static int render_page(const tc_response *r, const tc_fetch_options *opts, const
     uint32_t t0 = tc_time_ms(), t1, paint_ms;
     tc_style_stats ss;
     tc_layout_stats ls;
+    unsigned images = 0, images_failed = 0;
+    size_t i;
     int err;
 
     if (!fonts) {
@@ -122,6 +131,8 @@ static int render_page(const tc_response *r, const tc_fetch_options *opts, const
     t1 = tc_time_ms();
     if (!err)
         err = tc_page_layout(&page, fonts, (float)ro->width, 600);
+    if (!err)
+        err = tc_page_load_images(&page, fonts, tc_page_fetch_image_http, (void *)opts, image_progress);
     if (err) {
         tc_page_free(&page);
         return err;
@@ -149,12 +160,17 @@ static int render_page(const tc_response *r, const tc_fetch_options *opts, const
         tc_surface_free(&s);
     }
     paint_ms = tc_time_ms() - paint_ms;
+    for (i = 0; i < tc_page_image_count(&page); i++) {
+        images++;
+        images_failed += tc_page_image_state(&page, i) != TC_PAGE_IMAGE_LOADED;
+    }
     tc_styled_stats(page.styled, &ss);
     tc_layout_stats_of(page.layout, &ls);
     fprintf(stderr,
-            "fetch: rendered %.0fx%.0f: %u style sheets (%u failed) in %u ms; style %u ms (%u elements, %u "
-            "selectors, %u styles); layout %u ms (%u boxes, %u lines); paint %u ms; %u KB\n",
-            doc_w, doc_h, page.sheets_loaded, page.sheets_failed, (unsigned)(t1 - t0), page.style_ms,
+            "fetch: rendered %.0fx%.0f: %u style sheets (%u failed) in %u ms; %u images (%u failed); style %u ms "
+            "(%u elements, %u selectors, %u styles); layout %u ms (%u boxes, %u lines); paint %u ms; %u KB\n",
+            doc_w, doc_h, page.sheets_loaded, page.sheets_failed, (unsigned)(t1 - t0), images, images_failed,
+            page.style_ms,
             (unsigned)ss.elements, (unsigned)ss.selectors, (unsigned)ss.styles, page.layout_ms, (unsigned)ls.boxes,
             (unsigned)ls.lines, (unsigned)paint_ms, (unsigned)((ss.bytes + ls.bytes) / 1024));
     tc_page_free(&page);

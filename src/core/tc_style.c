@@ -119,6 +119,9 @@ typedef struct styler {
     int nomem;
     const tc_cond *last_cond;   /* the last media condition evaluated, and its result */
     int last_cond_result;
+    /* The element's background longhands as declared, put together into
+       layers once every property is computed. */
+    const tc_bg_list *bg[6];
     /* A counting Bloom filter of the current element's ancestors' ids,
        classes and tag names: selectors that need an ancestor that can't
        be there are skipped without walking up the tree. */
@@ -208,6 +211,7 @@ static void initial_style(tc_style *s)
     s->font_size_factor = 1;
     s->font_weight = 400;
     s->list_style_type = TC_LIST_DISC;
+    s->object_position[0].pct = s->object_position[1].pct = 50;
 }
 
 /* ---- Collecting the rules ---- */
@@ -825,7 +829,7 @@ static void presentational_hints(styler *st, const tc_element *el, hints *h)
             uint16_t props[P_COUNT];
             tc_pval vals[P_COUNT];
             if (tc_css_parse_values(&st->tmp, a, strlen(a), &v, &nv) == TC_OK &&
-                tc_prop_parse(&st->out->arena, P_FONT_FAMILY, v, nv, 0, props, vals) == 1)
+                tc_prop_parse(&st->out->arena, P_FONT_FAMILY, v, nv, 0, NULL, props, vals) == 1)
                 hint(h, P_FONT_FAMILY, &vals[0]);
         }
         break;
@@ -1383,7 +1387,7 @@ static int var_value(styler *st, const tc_var_value *var, uint16_t prop, const t
         r.parent = custom;
         r.depth = 0;
         if (substitute(&r, var->tokens.v, var->tokens.n, &t, 0))
-            n = tc_prop_parse(&st->out->arena, var->prop, t.items, t.len, st->quirks, props, vals);
+            n = tc_prop_parse(&st->out->arena, var->prop, t.items, t.len, st->quirks, var->base, props, vals);
         free(t.items);
         res->props = tc_arena_alloc(&st->out->arena, (n ? n : 1) * sizeof *res->props);
         res->vals = tc_arena_alloc(&st->out->arena, (n ? n : 1) * sizeof *res->vals);
@@ -1440,6 +1444,13 @@ static void copy_prop(tc_style *s, const tc_style *from, uint16_t p)
         s->background_color = from->background_color;
         s->currentcolor = (uint8_t)((s->currentcolor & ~TC_CC_BACKGROUND) | (from->currentcolor & TC_CC_BACKGROUND));
         break;
+    case P_BACKGROUND_IMAGE: s->backgrounds = from->backgrounds; break; /* the layers, whole */
+    case P_OBJECT_FIT: s->object_fit = from->object_fit; break;
+    case P_OBJECT_POSITION:
+        s->object_position[0] = from->object_position[0];
+        s->object_position[1] = from->object_position[1];
+        break;
+    case P_LIST_STYLE_IMAGE: s->list_style_image = from->list_style_image; break;
     case P_WIDTH: s->width = from->width; break;
     case P_HEIGHT: s->height = from->height; break;
     case P_MIN_WIDTH: s->min_width = from->min_width; break;
@@ -1638,6 +1649,107 @@ static float snap_border(float w)
     return w < 1 ? 1 : (float)floor(w);
 }
 
+/* A position's offset: from the left (top), or from the right (bottom). */
+static tc_length position_length(styler *st, const tc_style *s, const tc_calc *at, int far)
+{
+    tc_length len;
+    memset(&len, 0, sizeof len);
+    if (at) {
+        tc_pval v;
+        memset(&v, 0, sizeof v);
+        v.kind = PV_LENGTH;
+        v.ptr = at;
+        length_of(st, s->font_size, &v, &len);
+    }
+    if (far && !len.expr) {
+        len.pct = 100 - len.pct;
+        len.px = -len.px;
+    }
+    return len;
+}
+
+/* An image as computed: a gradient's stops get their colours and
+   positions; a url() is as declared. */
+static const tc_css_image *compute_image(styler *st, const tc_style *s, const tc_css_image *img)
+{
+    tc_css_image *out;
+    tc_color_stop *stops;
+    uint32_t i;
+    if (!img || img->type == TC_CSS_IMAGE_URL)
+        return img;
+    out = tc_arena_alloc(&st->out->arena, sizeof *out);
+    stops = tc_arena_alloc(&st->out->arena, img->nstops * sizeof *stops);
+    if (!out || !stops) {
+        st->nomem = 1;
+        return NULL;
+    }
+    *out = *img;
+    for (i = 0; i < img->nstops; i++) {
+        stops[i] = img->stops[i];
+        if (stops[i].currentcolor)
+            stops[i].color = s->color;
+        if (stops[i].has_position)
+            stops[i].position = position_length(st, s, stops[i].declared, 0);
+    }
+    out->stops = stops;
+    return out;
+}
+
+/* Background layers from the longhands: one per image; the other lists
+   repeat to match. */
+static void compute_backgrounds(styler *st, tc_style *s)
+{
+    const tc_bg_list *images = st->bg[0];
+    tc_backgrounds *bg;
+    tc_bg_layer *layers;
+    uint32_t i, any = 0;
+    if (!images)
+        return;
+    for (i = 0; i < images->count; i++)
+        any |= images->images[i] != NULL;
+    s->backgrounds = NULL;
+    if (!any)
+        return;
+    bg = tc_arena_alloc(&st->out->arena, sizeof *bg);
+    layers = tc_arena_alloc(&st->out->arena, images->count * sizeof *layers);
+    if (!bg || !layers) {
+        st->nomem = 1;
+        return;
+    }
+    for (i = 0; i < images->count; i++) {
+        tc_bg_layer *l = &layers[i];
+        const tc_bg_list *rep = st->bg[1], *pos = st->bg[2], *size = st->bg[3], *origin = st->bg[4],
+                         *clip = st->bg[5];
+        memset(l, 0, sizeof *l);
+        l->image = compute_image(st, s, images->images[i]);
+        l->repeat_x = rep ? rep->repeat[i % rep->count][0] : TC_BG_REPEAT;
+        l->repeat_y = rep ? rep->repeat[i % rep->count][1] : TC_BG_REPEAT;
+        if (pos) {
+            const tc_position *p = &pos->positions[i % pos->count];
+            l->x = position_length(st, s, p->x, p->far_x);
+            l->y = position_length(st, s, p->y, p->far_y);
+        }
+        l->width.kind = l->height.kind = TC_SIZE_AUTO;
+        if (size) {
+            const tc_bg_size_decl *z = &size->sizes[i % size->count];
+            l->size = z->kind;
+            if (z->w) {
+                l->width.kind = TC_SIZE_LENGTH;
+                l->width.length = position_length(st, s, z->w, 0);
+            }
+            if (z->h) {
+                l->height.kind = TC_SIZE_LENGTH;
+                l->height.length = position_length(st, s, z->h, 0);
+            }
+        }
+        l->origin = origin ? origin->boxes[i % origin->count] : TC_BG_PADDING_BOX;
+        l->clip = clip ? clip->boxes[i % clip->count] : TC_BG_BORDER_BOX;
+    }
+    bg->count = images->count;
+    bg->layers = layers;
+    s->backgrounds = bg;
+}
+
 static void apply(styler *st, tc_style *s, const tc_style *parent, uint16_t p, const tc_pval *v, const tc_element *el)
 {
     switch (p) {
@@ -1664,6 +1776,19 @@ static void apply(styler *st, tc_style *s, const tc_style *parent, uint16_t p, c
         set_color(s, v, &s->border_color[p - P_BORDER_TOP_COLOR], (uint8_t)(1u << (p - P_BORDER_TOP_COLOR)));
         break;
     case P_BACKGROUND_COLOR: set_color(s, v, &s->background_color, TC_CC_BACKGROUND); break;
+    case P_BACKGROUND_IMAGE: case P_BACKGROUND_REPEAT: case P_BACKGROUND_POSITION: case P_BACKGROUND_SIZE:
+    case P_BACKGROUND_ORIGIN: case P_BACKGROUND_CLIP:
+        st->bg[p - P_BACKGROUND_IMAGE] = v->kind == PV_PTR ? v->ptr : NULL;
+        break;
+    case P_OBJECT_FIT: s->object_fit = v->keyword; break;
+    case P_OBJECT_POSITION:
+        if (v->kind == PV_PTR) {
+            const tc_position *pos = v->ptr;
+            s->object_position[0] = position_length(st, s, pos->x, pos->far_x);
+            s->object_position[1] = position_length(st, s, pos->y, pos->far_y);
+        }
+        break;
+    case P_LIST_STYLE_IMAGE: s->list_style_image = v->kind == PV_PTR ? compute_image(st, s, v->ptr) : NULL; break;
     case P_WIDTH: size_of(st, s, v, &s->width); break;
     case P_HEIGHT: size_of(st, s, v, &s->height); break;
     case P_MIN_WIDTH: size_of(st, s, v, &s->min_width); break;
@@ -1830,6 +1955,7 @@ static void compute(styler *st, tc_style *s, const tc_style *parent, const tc_el
     memcpy(s, &st->initial, sizeof *s);
     memcpy((char *)s + inh, (const char *)parent + inh, sizeof *s - inh);
     s->custom = custom_props(st, parent->custom);
+    memset(st->bg, 0, sizeof st->bg);
     /* Fonts first: em units depend on font-size, and font-size on the
        family (monospace). Then colour, for currentcolor. */
     for (i = 0; i < TC_ARRAY_LEN(first); i++) {
@@ -1850,6 +1976,7 @@ static void compute(styler *st, tc_style *s, const tc_style *parent, const tc_el
             compute_prop(st, s, parent, p, el);
     }
 
+    compute_backgrounds(st, s);
     /* currentcolor */
     for (i = 0; i < 4; i++)
         if (s->currentcolor & (1u << i))

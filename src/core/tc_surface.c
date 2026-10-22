@@ -128,3 +128,112 @@ void tc_surface_gradient_v(tc_surface *s, tc_rect r, tc_color top, tc_color bott
         tc_surface_fill(s, tc_rect_make(clip.x, y, clip.w, 1), TC_RGB(red, green, blue));
     }
 }
+
+/* A premultiplied pixel over an opaque one. */
+static uint32_t over(uint32_t dst, uint32_t src)
+{
+    uint32_t a = src >> 24, ia, r, g, b;
+    if (a == 255)
+        return src & 0x00FFFFFFu;
+    if (a == 0)
+        return dst;
+    ia = 255 - a;
+    r = TC_RED(src) + mul_div255(TC_RED(dst), ia);
+    g = TC_GREEN(src) + mul_div255(TC_GREEN(dst), ia);
+    b = TC_BLUE(src) + mul_div255(TC_BLUE(dst), ia);
+    return (r > 255 ? 255 : r) << 16 | (g > 255 ? 255 : g) << 8 | (b > 255 ? 255 : b);
+}
+
+/* The source pixels [from, to) that destination pixel i of n covers, out
+   of size. */
+static void span(int i, int n, int size, int *from, int *to)
+{
+    *from = (int)((int64_t)i * size / n);
+    *to = (int)((int64_t)(i + 1) * size / n);
+    if (*to <= *from)
+        *to = *from + 1;
+    if (*to > size)
+        *to = size;
+    if (*from >= *to)
+        *from = *to - 1;
+}
+
+/* Where destination pixel i of n samples a source of size, in 16.16
+   fixed point: its centre, mapped back. */
+static int32_t sample(int i, int n, int size)
+{
+    return (int32_t)(((int64_t)(2 * i + 1) * size * 65536 / n - 65536) / 2);
+}
+
+static uint32_t lerp(uint32_t a, uint32_t b, uint32_t t) /* t: 0..256 */
+{
+    uint32_t rb = ((a & 0x00FF00FFu) * (256 - t) + (b & 0x00FF00FFu) * t) >> 8 & 0x00FF00FFu;
+    uint32_t ag = ((a >> 8 & 0x00FF00FFu) * (256 - t) + (b >> 8 & 0x00FF00FFu) * t) & 0xFF00FF00u;
+    return rb | ag;
+}
+
+void tc_surface_draw_image(tc_surface *s, tc_rect clip, const tc_surface *image, tc_rect dst)
+{
+    tc_rect r = tc_rect_intersect(tc_rect_intersect(clip, tc_rect_make(0, 0, s->width, s->height)), dst);
+    int sw = image->width, sh = image->height, x, y;
+
+    if (tc_rect_is_empty(r) || sw <= 0 || sh <= 0)
+        return;
+    if (dst.w == sw && dst.h == sh) {
+        for (y = r.y; y < r.y + r.h; y++) {
+            const uint32_t *src = image->pixels + (size_t)(y - dst.y) * (size_t)image->stride + (r.x - dst.x);
+            uint32_t *row = s->pixels + (size_t)y * (size_t)s->stride + r.x;
+            for (x = 0; x < r.w; x++)
+                row[x] = over(row[x], src[x]);
+        }
+        return;
+    }
+    if (sw > 2 * dst.w || sh > 2 * dst.h) {
+        /* Shrinking a lot: average the pixels each one covers. */
+        for (y = r.y; y < r.y + r.h; y++) {
+            uint32_t *row = s->pixels + (size_t)y * (size_t)s->stride;
+            int y0, y1;
+            span(y - dst.y, dst.h, sh, &y0, &y1);
+            for (x = r.x; x < r.x + r.w; x++) {
+                uint32_t sa = 0, sr = 0, sg = 0, sb = 0, n, c;
+                int x0, x1, i, j;
+                span(x - dst.x, dst.w, sw, &x0, &x1);
+                for (j = y0; j < y1; j++) {
+                    const uint32_t *src = image->pixels + (size_t)j * (size_t)image->stride;
+                    for (i = x0; i < x1; i++) {
+                        c = src[i];
+                        sa += c >> 24, sr += c >> 16 & 255, sg += c >> 8 & 255, sb += c & 255;
+                    }
+                }
+                n = (uint32_t)((y1 - y0) * (x1 - x0));
+                c = (sa / n) << 24 | (sr / n) << 16 | (sg / n) << 8 | sb / n;
+                row[x] = over(row[x], c);
+            }
+        }
+        return;
+    }
+    /* Bilinear, in 16.16 fixed point. */
+    for (y = r.y; y < r.y + r.h; y++) {
+        int32_t fy = sample(y - dst.y, dst.h, sh);
+        int y0 = fy < 0 ? 0 : fy >> 16, y1 = y0 + 1;
+        uint32_t ty = fy < 0 ? 0 : (uint32_t)(fy >> 8 & 255);
+        const uint32_t *top, *bottom;
+        uint32_t *row = s->pixels + (size_t)y * (size_t)s->stride;
+        if (y0 >= sh)
+            y0 = sh - 1;
+        if (y1 >= sh)
+            y1 = sh - 1;
+        top = image->pixels + (size_t)y0 * (size_t)image->stride;
+        bottom = image->pixels + (size_t)y1 * (size_t)image->stride;
+        for (x = r.x; x < r.x + r.w; x++) {
+            int32_t fx = sample(x - dst.x, dst.w, sw);
+            int x0 = fx < 0 ? 0 : fx >> 16, x1 = x0 + 1;
+            uint32_t tx = fx < 0 ? 0 : (uint32_t)(fx >> 8 & 255);
+            if (x0 >= sw)
+                x0 = sw - 1;
+            if (x1 >= sw)
+                x1 = sw - 1;
+            row[x] = over(row[x], lerp(lerp(top[x0], top[x1], tx), lerp(bottom[x0], bottom[x1], tx), ty));
+        }
+    }
+}

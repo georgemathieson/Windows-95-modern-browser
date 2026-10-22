@@ -48,3 +48,8 @@
 != sanity-mismatch.html sanity-mismatch-ref.html
 == table-as-blocks.html table-as-blocks-ref.html
 == quirks-body.html quirks-body-ref.html
+== image-natural-size.html image-natural-size-ref.html
+== image-max-width.html image-max-width-ref.html
+== image-object-fit.html image-object-fit-ref.html
+== background-position.html background-position-ref.html
+== gradient.html gradient-ref.html
