@@ -76,11 +76,12 @@ same article on the Japanese Wikipedia, in Japanese.**
    wasn't in the page. Scroll down while they load: the ones you scroll to
    come next. Expected for now: the infobox and other side boxes still sit
    one under another rather than beside the text (Sprint 7).
-5. Open the same article in Japanese: `ja.wikipedia.org/wiki/Windows_95`.
-   The text should be Japanese characters, not boxes, with lines breaking
-   between characters. Without the font pack (or a Japanese Windows or
-   Internet Explorer's Japanese language support), the characters are
-   boxes: that's expected.
+5. Open the same article in Japanese:
+   `ja.wikipedia.org/wiki/Microsoft_Windows_95`. The text should be
+   Japanese characters, not boxes, with lines breaking between
+   characters. Without the font pack (or a Japanese Windows or Internet
+   Explorer's Japanese language support), the characters are boxes:
+   that's expected.
 6. An animated picture: `en.wikipedia.org/wiki/GIF` has a rotating globe
    near the top. It turns while it's on screen, and stops (to save the
    processor) when you scroll it away or minimise the window.
@@ -91,16 +92,18 @@ same article on the Japanese Wikipedia, in Japanese.**
    can't do 256 colours, so this is the only test of it.) If something
    looks wrong, `TACHYON.EXE --dither` at any colour depth shows what
    Tachyon means to draw.
-8. **A web font:** `www.gov.uk` sets its headings and text in its own
-   font, downloaded with the page: letters should look rounder than
-   Arial's, a moment after the page appears.
+8. **Web fonts.** Many sites set their text in fonts of their own, such
+   as `www.bbc.co.uk/news` and `www.gov.uk`. The page appears in Windows'
+   fonts, then a moment later its text changes to the site's. A font
+   Tachyon can't read yet (one with PostScript outlines, on the backlog)
+   is named in `TACHYON.LOG`, and its text stays in Windows' fonts.
 9. If your mouse has a wheel, or your virtual machine passes a trackpad's
    two-finger scrolling on as a wheel, scroll a long page with it (Sprint
    2's crash, in the backlog, was in drawing code since rewritten).
 10. Optional: in an MS-DOS Prompt in `C:\Program Files\Tachyon`, run
-    `FETCH -q --render https://ja.wikipedia.org/wiki/Windows_95`. It loads
-    the page with its pictures and fonts without showing it, and prints
-    how long each step took and how much memory the page used.
+    `FETCH -q --render https://ja.wikipedia.org/wiki/Microsoft_Windows_95`.
+    It loads the page with its pictures and fonts without showing it, and
+    prints how long each step took and how much memory the page used.
 
 Please report:
 
