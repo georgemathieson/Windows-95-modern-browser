@@ -65,6 +65,12 @@ const char *tw_view_url(HWND view);
 /* A warning shown on the home page, e.g. about the clock (NULL for none). */
 void tw_view_set_warning(HWND view, const char *warning);
 
+/* The page shown, or NULL. It stays the view's: callers copy what they need. */
+const tc_page *tw_view_page(HWND view);
+/* A picture for the page arrived (index: the page's; img taken over, NULL
+   if it failed). Shown, or the page laid out again, a moment later. */
+void tw_view_image_arrived(HWND view, size_t index, tc_image *img);
+
 /* How many times the view has been painted (the smoke test checks this). */
 int tw_view_paint_count(HWND view);
 

@@ -14,8 +14,10 @@
 #include "tc_fetch.h"
 #include "tc_page.h"
 
-#define WM_TW_PROGRESS (WM_APP + 1)
-#define WM_TW_DONE     (WM_APP + 2)
+#define WM_TW_PROGRESS    (WM_APP + 1)
+#define WM_TW_DONE        (WM_APP + 2)
+#define WM_TW_IMAGE       (WM_APP + 3) /* wParam: the slot; lParam: the tw_images */
+#define WM_TW_IMAGES_DONE (WM_APP + 4) /* lParam: the tw_images, to free */
 
 /* What a load is doing after the fetch. */
 enum { TW_STAGE_FETCHING, TW_STAGE_READING, TW_STAGE_STYLES, TW_STAGE_LAYOUT };
@@ -57,5 +59,25 @@ tw_load *tw_load_start(HWND notify, const char *url, const tw_load_options *opts
 /* Ask the load to stop. WM_TW_DONE still arrives (with TC_ERR_CANCELLED). */
 void tw_load_cancel(tw_load *load);
 void tw_load_free(tw_load *load);
+
+/* A page's pictures, loaded on another worker thread once the window has
+ * the page: its URLs are copied, so the page stays the window's alone.
+ * Each picture is fetched over the same pool and cache and its header read
+ * (tc_image_new), then a WM_TW_IMAGE is posted; the window takes it with
+ * tw_images_take. A WM_TW_IMAGES_DONE comes last, and the window frees the
+ * job then. */
+typedef struct tw_images tw_images;
+
+/* NULL if the page has no pictures waiting, or memory ran out. */
+tw_images *tw_images_start(HWND notify, const tc_page *page, const tw_load_options *opts);
+/* For a WM_TW_IMAGE: the picture's index in the page, and its image (NULL
+   if it couldn't be loaded), handed over. */
+size_t tw_images_index(const tw_images *job, WPARAM slot);
+tc_image *tw_images_take(tw_images *job, WPARAM slot);
+/* How many have arrived, out of how many. */
+void tw_images_progress(const tw_images *job, unsigned *done, unsigned *total);
+/* Stop after the current picture. WM_TW_IMAGES_DONE still arrives. */
+void tw_images_cancel(tw_images *job);
+void tw_images_free(tw_images *job);
 
 #endif

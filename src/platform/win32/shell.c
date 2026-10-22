@@ -40,6 +40,8 @@ typedef struct shell {
     int history_pos; /* index of the current page, -1 when empty */
 
     tw_load *load;   /* the page being loaded, NULL when idle */
+    tw_images *images; /* the shown page's pictures being loaded, or NULL */
+    char done_status[400]; /* the page's "Done" line, shown again when its pictures are in */
     tw_view_mode mode; /* the page, its tree or its source */
     const char *proxy_host;
     uint16_t proxy_port;
@@ -126,7 +128,7 @@ static void update_nav_state(shell *sh)
     HMENU menu = GetMenu(sh->hwnd);
     int can_back = sh->history_pos > 0;
     int can_forward = sh->history_pos >= 0 && sh->history_pos < sh->history_len - 1;
-    int loading = sh->load != NULL;
+    int loading = sh->load != NULL || sh->images != NULL;
 
     EnableWindow(sh->buttons[0], can_back);
     EnableWindow(sh->buttons[1], can_forward);
@@ -136,13 +138,66 @@ static void update_nav_state(shell *sh)
     EnableMenuItem(menu, IDM_VIEW_STOP, MF_BYCOMMAND | (loading ? MF_ENABLED : MF_GRAYED));
 }
 
-/* Abandon the current load. Its WM_TW_DONE still arrives and frees it. */
+/* Abandon the current load, and the shown page's pictures. Their last
+   messages still arrive and free them. */
 static void cancel_load(shell *sh)
 {
     if (sh->load) {
         tw_load_cancel(sh->load);
         sh->load = NULL;
     }
+    if (sh->images) {
+        tw_images_cancel(sh->images);
+        sh->images = NULL;
+    }
+}
+
+static void load_options(shell *sh, tw_load_options *opts)
+{
+    memset(opts, 0, sizeof *opts);
+    opts->proxy_host = sh->proxy_host;
+    opts->proxy_port = sh->proxy_port;
+    opts->fonts = sh->fonts;
+    opts->pool = sh->pool;
+    opts->cache = sh->cache;
+    tw_view_page_size(sh->view, &opts->width, &opts->height);
+}
+
+/* The shown page's pictures, now that the window has it. */
+static void start_images(shell *sh)
+{
+    const tc_page *page = tw_view_page(sh->view);
+    tw_load_options opts;
+    if (!page)
+        return;
+    load_options(sh, &opts);
+    sh->images = tw_images_start(sh->hwnd, page, &opts);
+}
+
+static void on_image(shell *sh, WPARAM slot, tw_images *job)
+{
+    unsigned done, total;
+    if (job != sh->images) {
+        tc_image_free(tw_images_take(job, slot));
+        return;
+    }
+    tw_view_image_arrived(sh->view, tw_images_index(job, slot), tw_images_take(job, slot));
+    tw_images_progress(job, &done, &total);
+    if (done < total) {
+        char text[100];
+        snprintf(text, sizeof text, "Loading pictures: %u of %u", done, total);
+        set_status(sh, text);
+    }
+}
+
+static void on_images_done(shell *sh, tw_images *job)
+{
+    if (job == sh->images) {
+        sh->images = NULL;
+        set_status(sh, sh->done_status);
+        update_nav_state(sh);
+    }
+    tw_images_free(job);
 }
 
 /* ---- Showing the current history entry ---- */
@@ -177,14 +232,8 @@ static void show_current(shell *sh, int reload)
     if (strncmp(url, "about:", 6) == 0) {
         show_about_page(sh, url);
     } else {
-        memset(&opts, 0, sizeof opts);
-        opts.proxy_host = sh->proxy_host;
-        opts.proxy_port = sh->proxy_port;
-        opts.fonts = sh->fonts;
-        opts.pool = sh->pool;
-        opts.cache = sh->cache;
+        load_options(sh, &opts);
         opts.reload = reload;
-        tw_view_page_size(sh->view, &opts.width, &opts.height);
         sh->load = tw_load_start(sh->hwnd, url, &opts);
         if (sh->load) {
             tw_view_show_message(sh->view, url, "Loading...", NULL, NULL);
@@ -472,6 +521,9 @@ static void show_response(shell *sh, tw_load *load)
     else
         snprintf(status + n, sizeof status - (size_t)n, ". Not secure (plain HTTP)");
     set_status(sh, status);
+    snprintf(sh->done_status, sizeof sh->done_status, "%s", status);
+    if (load->has_page)
+        start_images(sh);
     mem.dwLength = sizeof mem;
     GlobalMemoryStatus(&mem);
     tc_log("HTTP %d. %s; %lu MB RAM free", r->status, status, (unsigned long)(mem.dwAvailPhys >> 20));
@@ -567,6 +619,8 @@ static void on_command(shell *sh, int id)
             /* The load reports back as cancelled and shows the Stopped page. */
             tw_load_cancel(sh->load);
             set_status(sh, "Stopping...");
+        } else if (sh->images) {
+            tw_images_cancel(sh->images); /* its last message restores the status */
         }
         break;
     case IDM_VIEW_RELOAD:
@@ -718,6 +772,10 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         /* A load that outlived the window still has to be freed. */
         if (msg == WM_TW_DONE)
             tw_load_free((tw_load *)lp);
+        else if (msg == WM_TW_IMAGE)
+            tc_image_free(tw_images_take((tw_images *)lp, wp));
+        else if (msg == WM_TW_IMAGES_DONE)
+            tw_images_free((tw_images *)lp);
         return DefWindowProcA(hwnd, msg, wp, lp);
     }
 
@@ -727,6 +785,12 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_TW_DONE:
         on_done(sh, (tw_load *)lp);
+        return 0;
+    case WM_TW_IMAGE:
+        on_image(sh, wp, (tw_images *)lp);
+        return 0;
+    case WM_TW_IMAGES_DONE:
+        on_images_done(sh, (tw_images *)lp);
         return 0;
     case WM_TW_HOVER:
         /* A link's address in the status bar while the mouse is on it. */

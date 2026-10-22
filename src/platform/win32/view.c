@@ -21,6 +21,8 @@ enum display { D_BLANK, D_PAGE, D_TREE, D_SOURCE };
 #define RELAYOUT_TIMER 1
 #define RELAYOUT_MS    150   /* lay out again this long after the last resize */
 #define HOVER_TIMER    2
+#define IMAGE_TIMER    3
+#define IMAGE_MS       250   /* pictures arriving together are shown together */
 #define HOVER_MS       100   /* Windows 95 has no TrackMouseEvent: poll while over a link */
 #define LINE_SCROLL    40    /* pixels per arrow key */
 #define WHEEL_SCROLL   48    /* pixels per wheel notch */
@@ -42,6 +44,8 @@ typedef struct source_text {
 typedef struct view {
     HWND hwnd;
     tc_font_set *fonts;
+    int image_relayout;          /* a picture arrived that layout was waiting for */
+    int image_timer;             /* IMAGE_TIMER is set */
     tw_view_mode mode;
     char url[2048];
     char warning[512];
@@ -423,7 +427,8 @@ static void scroll_by(view *v, int dx, int dy)
 }
 
 /* Lay the page out again for the view's size (after a resize). */
-static void relayout(view *v)
+/* Lay the page out again for the view's size (if that changed, or force). */
+static void relayout(view *v, int force)
 {
     RECT client;
     float fraction;
@@ -432,7 +437,7 @@ static void relayout(view *v)
     GetClientRect(v->hwnd, &client);
     if (client.right <= 0 || client.bottom <= 0)
         return;
-    if (v->page.layout && v->page.width == (float)client.right)
+    if (!force && v->page.layout && v->page.width == (float)client.right)
         return;
     fraction = v->doc_h > 0 ? v->sy / v->doc_h : 0;
     SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_WAIT));
@@ -933,9 +938,17 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_TIMER:
         if (wp == RELAYOUT_TIMER) {
             KillTimer(hwnd, RELAYOUT_TIMER);
-            relayout(v);
+            relayout(v, 0);
         } else if (wp == HOVER_TIMER) {
             check_hover(v);
+        } else if (wp == IMAGE_TIMER) {
+            KillTimer(hwnd, IMAGE_TIMER);
+            v->image_timer = 0;
+            if (v->image_relayout)
+                relayout(v, 1);
+            else if (display_of(v) == D_PAGE)
+                redraw(v);
+            v->image_relayout = 0;
         }
         return 0;
     case WM_VSCROLL:
@@ -985,6 +998,7 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         KillTimer(hwnd, RELAYOUT_TIMER);
         KillTimer(hwnd, HOVER_TIMER);
+        KillTimer(hwnd, IMAGE_TIMER);
         free_backbuffer(v);
         DeleteObject(v->font_small);
         DeleteObject(v->font_mono);
@@ -1152,6 +1166,16 @@ int tw_view_show_page(HWND hwnd, const char *head, size_t head_len, tc_page *pag
     v->page = *page;
     memset(page, 0, sizeof *page);
     v->has_page = 1;
+    v->image_relayout = 0;
+    {
+        /* Decoded pictures may use an eighth of the memory, within reason. */
+        MEMORYSTATUS mem;
+        size_t budget;
+        mem.dwLength = sizeof mem;
+        GlobalMemoryStatus(&mem);
+        budget = mem.dwTotalPhys / 8;
+        tc_page_set_image_memory(&v->page, TC_CLAMP(budget, (size_t)8 << 20, (size_t)64 << 20));
+    }
     snprintf(v->url, sizeof v->url, "%s", v->page.url.href ? v->page.url.href : "");
     v->head = copy_mem(head ? head : "", head ? head_len : 0);
     v->head_len = head ? head_len : 0;
@@ -1219,7 +1243,7 @@ int tw_view_set_mode(HWND hwnd, tw_view_mode mode)
         if (prepare_mode(v) != TC_OK)
             v->mode = TW_MODE_PAGE;
         if (display_of(v) == D_PAGE && v->page.width != (float)v->width && v->width > 0)
-            relayout(v);
+            relayout(v, 0);
         finish(v);
         return 1;
     }
@@ -1393,4 +1417,22 @@ void tw_view_show_fonts(HWND hwnd)
     tc_buf_append_str(&html, "</table></div></body></html>");
     tw_view_show_html(hwnd, "about:fonts", html.data ? tc_buf_cstr(&html) : "");
     tc_buf_free(&html);
+}
+
+const tc_page *tw_view_page(HWND hwnd)
+{
+    view *v = get_view(hwnd);
+    return v && v->has_page ? &v->page : NULL;
+}
+
+void tw_view_image_arrived(HWND hwnd, size_t index, tc_image *img)
+{
+    view *v = get_view(hwnd);
+    if (!v || !v->has_page) {
+        tc_image_free(img);
+        return;
+    }
+    v->image_relayout |= tc_page_image_arrived(&v->page, index, img);
+    if (!v->image_timer) /* setting it again would put it off */
+        v->image_timer = SetTimer(hwnd, IMAGE_TIMER, IMAGE_MS, NULL) != 0;
 }

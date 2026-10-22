@@ -201,3 +201,124 @@ void tw_load_free(tw_load *load)
         free(load);
     }
 }
+
+/* ---- Pictures ---- */
+
+typedef struct picture {
+    char *url;
+    size_t index;
+    tc_image *image;
+} picture;
+
+struct tw_images {
+    HWND notify;
+    volatile int cancel;
+    picture *items;
+    unsigned count;
+    volatile unsigned done;
+    char *proxy_host;
+    tw_load_options opts;
+};
+
+static void images_thread(void *arg)
+{
+    tw_images *job = arg;
+    tc_fetch_options fo;
+    unsigned i;
+
+    tc_fetch_options_init(&fo);
+    fo.proxy_host = job->proxy_host;
+    fo.proxy_port = job->opts.proxy_port;
+    fo.cancel = &job->cancel;
+    fo.pool = job->opts.pool;
+    fo.cache = job->opts.cache;
+    tc_log("loader: %u pictures", job->count);
+    for (i = 0; i < job->count && !job->cancel; i++) {
+        tc_buf body;
+        char charset[64];
+        int err;
+        tc_buf_init(&body);
+        err = tc_page_fetch_image_http(&fo, job->items[i].url, &body, charset, sizeof charset);
+        if (!err)
+            err = tc_image_new(body.data ? body.data : "", body.len, &job->items[i].image);
+        tc_buf_free(&body);
+        if (err && err != TC_ERR_CANCELLED)
+            tc_trace("picture %u: %s", i, tc_err_text(err));
+        job->done = i + 1;
+        PostMessageA(job->notify, WM_TW_IMAGE, i, (LPARAM)job);
+    }
+    tc_log("loader: %u of %u pictures fetched%s", job->done, job->count, job->cancel ? " (stopped)" : "");
+    PostMessageA(job->notify, WM_TW_IMAGES_DONE, 0, (LPARAM)job);
+}
+
+tw_images *tw_images_start(HWND notify, const tc_page *page, const tw_load_options *opts)
+{
+    size_t i, n = tc_page_image_count(page);
+    tw_images *job;
+    unsigned count = 0;
+
+    for (i = 0; i < n; i++)
+        count += tc_page_image_state(page, i) == TC_PAGE_IMAGE_WAITING;
+    if (!count || !(job = calloc(1, sizeof *job)))
+        return NULL;
+    job->notify = notify;
+    job->opts = *opts;
+    job->items = calloc(count, sizeof *job->items);
+    if (!job->items || (opts->proxy_host && !(job->proxy_host = copy_string(opts->proxy_host))))
+        goto fail;
+    for (i = 0; i < n; i++) {
+        if (tc_page_image_state(page, i) != TC_PAGE_IMAGE_WAITING)
+            continue;
+        job->items[job->count].index = i;
+        if (!(job->items[job->count].url = copy_string(tc_page_image_url(page, i))))
+            goto fail;
+        job->count++;
+    }
+    if (tc_thread_start(images_thread, job) != TC_OK)
+        goto fail;
+    return job;
+
+fail:
+    tw_images_free(job);
+    return NULL;
+}
+
+size_t tw_images_index(const tw_images *job, WPARAM slot)
+{
+    return slot < job->count ? job->items[slot].index : (size_t)-1;
+}
+
+tc_image *tw_images_take(tw_images *job, WPARAM slot)
+{
+    tc_image *img;
+    if (slot >= job->count)
+        return NULL;
+    img = job->items[slot].image;
+    job->items[slot].image = NULL;
+    return img;
+}
+
+void tw_images_progress(const tw_images *job, unsigned *done, unsigned *total)
+{
+    *done = job->done;
+    *total = job->count;
+}
+
+void tw_images_cancel(tw_images *job)
+{
+    job->cancel = 1;
+}
+
+void tw_images_free(tw_images *job)
+{
+    unsigned i;
+    if (!job)
+        return;
+    for (i = 0; job->items && i < job->count; i++) {
+        free(job->items[i].url);
+        tc_image_free(job->items[i].image);
+    }
+    free(job->items);
+    free(job->proxy_host);
+    free(job);
+}
