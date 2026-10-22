@@ -79,6 +79,7 @@ add_library(tachyon_core STATIC
   tc_html_parser.c
   tc_html_sniff.c
   tc_html_tokenizer.c
+  tc_image.c
   tc_http.c
   tc_inflate.c
   tc_layout.c

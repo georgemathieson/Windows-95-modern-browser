@@ -13,7 +13,11 @@ option(TACHYON_WERROR "Treat compiler warnings as errors" OFF)
 option(TACHYON_FUZZ "Build the libFuzzer targets, with AddressSanitizer and UBSan (clang, host only)" OFF)
 
 if(TACHYON_FUZZ)
-  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined)
+  # Not -fsanitize=function: Wuffs calls its decoders through function
+  # pointers that take the decoder as void *, by design (see
+  # third_party/wuffs/README.tachyon.md).
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize=function
+                      -fno-sanitize-recover=undefined)
   add_link_options(-fsanitize=address,undefined)
 endif()
 

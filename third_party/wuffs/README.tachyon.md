@@ -25,7 +25,9 @@ so this is pinned to the commit above.
   They use SSE behind a CPU check, which Windows 95 can't allow (decision 9).
 
 `src/core/tc_wuffs.c` compiles the implementation with Tachyon's warning
-flags relaxed for that file. It needs nothing from the C library beyond
+flags relaxed for that file. Its generic image decoder calls each format's
+functions through pointers whose first parameter is `void *`, which UBSan's
+`-fsanitize=function` reports; the fuzz build turns that one check off. It needs nothing from the C library beyond
 `calloc`, `free`, `memcmp`, `memmove` and `memset`.
 
 To update, copy `release/c/wuffs-v0.4.c` (or a newer release's file) from a

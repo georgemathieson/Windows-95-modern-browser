@@ -12,6 +12,17 @@ void tc_test_fail(const char *file, int line, const char *what)
     printf("FAIL %s (%s:%d): %s\n", current_test, file, line, what);
 }
 
+const tc_test_blob *tc_test_blob_get(const char *name)
+{
+    size_t i;
+    for (i = 0; i < tc_test_blob_count; i++)
+        if (strcmp(tc_test_blobs[i].name, name) == 0)
+            return &tc_test_blobs[i];
+    tc_test_checks++;
+    tc_test_fail(__FILE__, __LINE__, name);
+    return NULL;
+}
+
 void tc_test_run(const char *name, void (*fn)(void))
 {
     int before = tc_test_failures;
@@ -29,6 +40,7 @@ void tc_suite_encoding(void);
 void tc_suite_fixup(void);
 void tc_suite_font(void);
 void tc_suite_html(void);
+void tc_suite_image(void);
 void tc_suite_layout(void);
 void tc_suite_log(void);
 void tc_suite_net(void);
@@ -51,6 +63,7 @@ int main(void)
     tc_suite_fixup();
     tc_suite_font();
     tc_suite_html();
+    tc_suite_image();
     tc_suite_layout();
     tc_suite_log();
     tc_suite_net();
