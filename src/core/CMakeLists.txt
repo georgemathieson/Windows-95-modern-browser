@@ -99,10 +99,12 @@ add_library(tachyon_core STATIC
   tc_url.c
   tc_url_host.c
   tc_utf8.c
+  tc_wuffs.c
 )
 target_include_directories(tachyon_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/third_party/stb
+  ${PROJECT_SOURCE_DIR}/third_party/wuffs
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib)

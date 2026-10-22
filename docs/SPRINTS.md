@@ -30,38 +30,33 @@ does not remember anything between sessions; this board does.
 | Display | 800×600, 16-bit colour | 640×480, 256 colours |
 | Network | TCP/IP over a network card or Dial-Up Networking, IPv4 | same |
 
-## Current sprint: Sprint 3, First Light
+## Current sprint: Sprint 4, Images and fonts
 
-**Goal:** real pages rendered with CSS, layout and text.
+**Goal:** pictures, and text in every script.
 
-**Demo:** read a Wikipedia article on Windows 95.
+**Demo:** on Windows 95, read Wikipedia's Windows 95 article with its pictures, and the same article on the Japanese Wikipedia, in Japanese.
 
 **Definition of done**
 
-- [x] CSS syntax: the tokenizer and parser of today's CSS Syntax Level 3, with `@charset` and BOM handling: **css-parsing-tests** (component values, declarations, rules, stylesheets, An+B, stylesheet bytes) pass, apart from a listed few where the 2021 tests and today's spec differ (decision 28)
-- [x] Colours: named colours, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`: css-parsing-tests' colour files pass
-- [x] Selectors Level 3 plus `:is()`, `:where()` and `:not()` with lists; specificity; matching fast enough for Wikipedia (rules bucketed by id, class and tag)
-- [x] The cascade: the HTML Standard's user-agent stylesheet, `<style>`, `<link rel=stylesheet>`, `@import`, `style` attributes, `!important`, inheritance, `initial`/`inherit`/`unset`, custom properties and `var()`, and media queries for screen width (full media queries stay in Sprint 7)
-- [x] Computed values for what block and inline layout need: display, box model (margin, border, padding, width, height, min/max, box-sizing), lengths (px, em, rem, ex, ch, %, vw/vh, pt and friends) with `calc()`, colour and background colour, fonts, text (align, indent, decoration, transform, white-space, spacing), vertical-align, visibility, list styles, `::before`/`::after` with string content
-- [x] Text: Windows 95's own TrueType fonts (Arial, Times New Roman, Courier New and the rest installed) rasterised by stb_truetype into `tc_surface`, with font matching, bold and italic, and a glyph cache (decision 27). GDI text retires from the page view
-- [x] Layout: the box tree (anonymous boxes, list markers, generated content, `<br>`, `<img>` as a placeholder with its alt text); block layout with auto widths, auto margins and margin collapsing; inline layout with line breaking, white-space handling, text-align and vertical-align; inline-block. Tables, floats and positioning are laid out as blocks until Sprint 7 (decision 29)
-- [x] Painting: backgrounds, borders (solid, dashed, dotted, double and Windows 95's own inset, outset, groove and ridge), text and its decorations, list markers; only the visible part is painted
-- [x] The browser shows rendered pages by default (View > Page), with the document tree and source one menu away; scrolling by scroll bar, wheel and keyboard; links show a hand and their address in the status bar, and clicking one follows it (`#fragment` links scroll); window resizing lays the page out again; `about:` pages are HTML
-- [x] Loading: stylesheets fetched after the page, over kept-alive connections reused per host, with a small in-memory cache (decision 30)
-- [x] Reference tests: `tachyon-render` lays out and paints a page to PNG on the host; reftests compare a test page with its reference pixel for pixel under ctest, natively and under Wine
-- [x] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
-- [ ] **George reads a Wikipedia article in Tachyon on Windows 95** (the demo)
-- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. PR #4 is merged, but `main` has moved on to 0.3.0 with PR #5, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
+- [ ] Image decoding through Wuffs (decision 35): PNG with transparency, JPEG (baseline and progressive), GIF with animation, BMP, WebP (lossy and lossless, with alpha) and ICO, recognised by their bytes as the MIME Sniffing Standard says; memory bounded; unit tests and fuzzing
+- [ ] `<img>` with `src`, `srcset` and `sizes`, `width` and `height`, and its alt text while loading or when it fails; `<picture>` choosing a source by type; replaced elements sized from their natural size and aspect ratio; `object-fit` and `object-position`
+- [ ] CSS images: `background-image` with `url()` and `linear-gradient()`, `background-repeat`, `background-position`, `background-size`, `background-origin` and `background-clip`, several layers; `list-style-image`
+- [ ] Loading: the page appears before its images; images load over the kept-alive connections, the ones in view first, and appear as they arrive (the page only moves when an image's size wasn't given); decoded images stay within a memory budget
+- [ ] Animated GIFs play in the view
+- [ ] 256-colour displays: pages are dithered to a palette instead of GDI's nearest colours
+- [ ] Basic SVG: shapes and paths with fills and strokes, transforms and `viewBox`, in `<img>`, CSS backgrounds and inline `<svg>`
+- [ ] Font fallback: each character missing from the chosen font comes from a font that has it, Windows' installed fonts first, then Tachyon's optional font pack (decision 36); TrueType collections (`.ttc`); lines break between Chinese and Japanese characters. Scripts that need shaping or right-to-left layout wait (decision 37)
+- [ ] `@font-face`: TrueType and OpenType, WOFF and WOFF2 (Brotli), with `unicode-range`, weights and styles; every downloaded font checked before stb_truetype reads it (decision 38); text laid out again when its fonts arrive. Brotli also for `Content-Encoding: br`
+- [ ] Encodings: Shift_JIS, EUC-JP, ISO-2022-JP, GBK, gb18030, Big5 and EUC-KR from the WHATWG indexes, with tests (revisits decision 18)
+- [ ] Reference tests for images, backgrounds and fallback; the decoders, SVG and fonts survive fuzzing; CI renders the real sites with their images, the Japanese Wikipedia included
+- [ ] **George reads both Wikipedia articles on Windows 95** (the demo)
+- [ ] Carried over from Sprint 3: George reads a Wikipedia article in Tachyon on Windows 95 (Sprint 3's demo, with this sprint's build or PR #6's)
+- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. `main` has moved on, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
 
 ## Upcoming sprints
 
 The goals are firm; the scope lists are drafts and get refined at the start
 of each sprint.
-
-### Sprint 4: Images and fonts
-
-**Goal:** pictures, and text in every script.
-PNG, JPEG, GIF (animated), WebP, ICO and basic SVG; `<img>` and background images; Unicode font fallback; `@font-face` with WOFF/WOFF2 (needs Brotli); dithering for 256-colour displays.
 
 ### Sprint 5: JavaScript
 
@@ -99,7 +94,6 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Verify the hand-curated export lists against real Windows 95 DLLs (`EXPORTS.EXE`).
 - TLS session resumption, to make repeat visits to a site faster.
 - Certificate revocation (OCSP stapling or a CRLite-style list) and HSTS.
-- **Chinese, Japanese and Korean encodings** (GBK, gb18030, Big5, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR): about 200 KB of index tables, or less compressed. Best done with Sprint 4's font fallback, when those pages can be drawn.
 - Declarative shadow DOM (`<template shadowrootmode>`) and `<template for>` content patching, both new in the HTML Standard.
 - An XML parser for XHTML (`application/xhtml+xml` is parsed as HTML for now).
 - Parsing while downloading, which `document.write()` and progressive rendering both need.
@@ -111,8 +105,8 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Selecting and copying text on a page.
 - Reading Internet Explorer's proxy settings from the registry.
 - HTTP/2 (most sites still accept HTTP/1.1).
-- Brotli content encoding (needed for WOFF2 in Sprint 4 anyway).
-- 256-colour and 16-colour displays: our own ordered dithering.
+- 16-colour displays: dithering to the VGA palette (256 colours are Sprint 4's).
+- **Right-to-left text and shaping** (decision 37): the Unicode bidirectional algorithm, Arabic and Hebrew layout, and shaping for Arabic and Indic scripts.
 - Shell: toolbar icons in the Windows 95 style, Large Fonts (120 DPI) layout, File > New Window.
 - Unicode in the window title and address bar (Windows 95's APIs are ANSI).
 - Out-of-memory handling and per-page memory limits.
@@ -160,6 +154,10 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 32 | One pipeline for a page (`tc_page`): the browser, `FETCH --render` and `tachyon-render` differ only in how they fetch style sheets. The browser's own pages (home, errors, `about:fonts`) are HTML drawn by the same engine | What CI and the reference tests check is then what George sees; the old GDI page drawing goes | Sprint 3 |
 | 33 | Windows 95's gaps in the page view are filled by hand: a hand cursor of our own (no `IDC_HAND`), polling every 100 ms while the mouse is over a link (no `TrackMouseEvent`), and scroll positions in units small enough for 16-bit scroll bars | Those APIs arrived with Windows 98 and NT 4; win95check refuses them | Sprint 3 |
 | 34 | Limits a hostile or broken page can't get past: boxes nest 200 deep, lengths stay within ±2<sup>25</sup> px (as in Chromium), font sizes within 10,000 px, documents stop at 10<sup>8</sup> px, glyphs bigger than 128×128 px aren't cached but rasterised only where they show, and a page loads at most 64 style sheets with imports 4 deep | Windows 95's 1 MB stack and small memory, C's rules (an infinite float converted to an int is undefined), and time: the render fuzzer found each of these | Sprint 3 |
+| 35 | Images are decoded by Wuffs (v0.4, pinned to a commit), not libpng, libjpeg, giflib and libwebp, nor stb_image | Wuffs is memory-safe by construction (its compiler proves the bounds checks), is one C file, and covers PNG, JPEG, GIF, BMP and lossy and lossless WebP; its CPU-specific code compiles out, so no SSE. stb_image says it isn't for untrusted input, and the classic libraries are four projects with SIMD code and long CVE histories. v0.4 is an alpha, so its API may change between updates | Sprint 4 |
+| 36 | Fonts for other scripts: Windows' installed fonts first (including Microsoft's language packs), then an optional font pack, "Fonts for other languages", in the installer: DejaVu Sans (Greek, Cyrillic, more Latin, Hebrew, symbols) and WenQuanYi Micro Hei (Chinese, Japanese, Korean). About 2 MB more in the installer and 6 MB installed; the CD and zip carry it, the floppy can't | George's choice. Windows 95's own fonts cover Western European languages only, and a fallback font is what every other browser relies on. These two are free (Bitstream Vera and Apache 2.0 licences) and cover the most-used scripts in the least space; Noto CJK alone is 16 MB per weight | Sprint 4 |
+| 37 | Sprint 4 covers scripts written one character after another (Latin, Greek, Cyrillic, Chinese, Japanese, Korean, symbols), and the old Chinese, Japanese and Korean encodings, revisiting decision 18. Right-to-left layout (the bidirectional algorithm) and shaping (Arabic, Indic scripts) wait for a later sprint | George's choice. Shaping and bidi are each a project; the encodings are tables, and pages in them are still around | Sprint 4 |
+| 38 | Fonts from the web are checked by Tachyon's own code before stb_truetype reads them: every table stb_truetype uses is bounds-checked, composite glyphs are depth-limited, and a font that fails is dropped | stb_truetype trusts its input and says so; web fonts are attacker-controlled. Browsers use OTS (C++) for the same job | Sprint 4 |
 
 ## Risks
 
@@ -176,7 +174,14 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 ## Sprint history
 
-### Sprint 3: First Light (started 2026-10-21)
+### Sprint 4: Images and fonts (started 2026-10-22)
+
+- Started from `main` after PR #6 merged Sprint 3.
+- George's choices: fonts for other scripts come from Windows first, then an optional font pack on the CD and in the zip (decision 36); this sprint covers scripts written one character after another, plus the old Chinese, Japanese and Korean encodings (decision 37).
+
+### Sprint 3: First Light (2026-10-21 to 22; merged as PRs #5 and #6)
+
+- Done but the demo: George hadn't read a Wikipedia article on Windows 95 yet when Sprint 4 started, so it carries over.
 
 - Started on top of Sprint 2's branch, since PR #4 (installer and log) wasn't merged yet.
 - Scope refined: custom properties, `calc()` and width media queries come forward from Sprint 7 because Wikipedia's styles depend on them; tables, floats and positioning stay blocks (decision 29); fonts come from Windows 95 itself (decision 27).

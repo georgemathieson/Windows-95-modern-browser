@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(tachyon VERSION 0.3.0 LANGUAGES C)
+project(tachyon VERSION 0.4.0 LANGUAGES C)
 
-set(TACHYON_SPRINT 3)
-set(TACHYON_SPRINT_NAME "First Light")
+set(TACHYON_SPRINT 4)
+set(TACHYON_SPRINT_NAME "Images and fonts")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
