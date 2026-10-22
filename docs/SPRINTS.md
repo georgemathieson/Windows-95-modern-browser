@@ -38,12 +38,12 @@ does not remember anything between sessions; this board does.
 
 **Definition of done**
 
-- [ ] Image decoding through Wuffs (decision 35): PNG with transparency, JPEG (baseline and progressive), GIF with animation, BMP, WebP (lossy and lossless, with alpha) and ICO, recognised by their bytes as the MIME Sniffing Standard says; memory bounded; unit tests and fuzzing
-- [ ] `<img>` with `src`, `srcset` and `sizes`, `width` and `height`, and its alt text while loading or when it fails; `<picture>` choosing a source by type; replaced elements sized from their natural size and aspect ratio; `object-fit` and `object-position`
-- [ ] CSS images: `background-image` with `url()` and `linear-gradient()`, `background-repeat`, `background-position`, `background-size`, `background-origin` and `background-clip`, several layers; `list-style-image`
+- [x] Image decoding through Wuffs (decision 35): PNG with transparency, JPEG (baseline and progressive), GIF with animation, BMP, WebP (lossy and lossless, with alpha) and ICO, recognised by their bytes as the MIME Sniffing Standard says; memory bounded; unit tests and fuzzing
+- [x] `<img>` with `src`, `srcset` and `sizes`, `width` and `height`, and its alt text while loading or when it fails; `<picture>` choosing a source by type; replaced elements sized from their natural size and aspect ratio; `object-fit` and `object-position`
+- [x] CSS images: `background-image` with `url()` and `linear-gradient()`, `background-repeat`, `background-position`, `background-size`, `background-origin` and `background-clip`, several layers; `list-style-image`
 - [ ] Loading: the page appears before its images; images load over the kept-alive connections, the ones in view first, and appear as they arrive (the page only moves when an image's size wasn't given); decoded images stay within a memory budget
-- [ ] Animated GIFs play in the view
-- [ ] 256-colour displays: pages are dithered to a palette instead of GDI's nearest colours
+- [x] Animated GIFs play in the view
+- [x] 256-colour displays: pages are dithered to a palette instead of GDI's nearest colours (decision 39; Wine can't act as a 256-colour display, so George checks it)
 - [ ] Basic SVG: shapes and paths with fills and strokes, transforms and `viewBox`, in `<img>`, CSS backgrounds and inline `<svg>`
 - [ ] Font fallback: each character missing from the chosen font comes from a font that has it, Windows' installed fonts first, then Tachyon's optional font pack (decision 36); TrueType collections (`.ttc`); lines break between Chinese and Japanese characters. Scripts that need shaping or right-to-left layout wait (decision 37)
 - [ ] `@font-face`: TrueType and OpenType, WOFF and WOFF2 (Brotli), with `unicode-range`, weights and styles; every downloaded font checked before stb_truetype reads it (decision 38); text laid out again when its fonts arrive. Brotli also for `Content-Encoding: br`
@@ -158,6 +158,7 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 36 | Fonts for other scripts: Windows' installed fonts first (including Microsoft's language packs), then an optional font pack, "Fonts for other languages", in the installer: DejaVu Sans (Greek, Cyrillic, more Latin, Hebrew, symbols) and WenQuanYi Micro Hei (Chinese, Japanese, Korean). About 2 MB more in the installer and 6 MB installed; the CD and zip carry it, the floppy can't | George's choice. Windows 95's own fonts cover Western European languages only, and a fallback font is what every other browser relies on. These two are free (Bitstream Vera and Apache 2.0 licences) and cover the most-used scripts in the least space; Noto CJK alone is 16 MB per weight | Sprint 4 |
 | 37 | Sprint 4 covers scripts written one character after another (Latin, Greek, Cyrillic, Chinese, Japanese, Korean, symbols), and the old Chinese, Japanese and Korean encodings, revisiting decision 18. Right-to-left layout (the bidirectional algorithm) and shaping (Arabic, Indic scripts) wait for a later sprint | George's choice. Shaping and bidi are each a project; the encodings are tables, and pages in them are still around | Sprint 4 |
 | 38 | Fonts from the web are checked by Tachyon's own code before stb_truetype reads them: every table stb_truetype uses is bounds-checked, composite glyphs are depth-limited, and a font that fails is dropped | stb_truetype trusts its input and says so; web fonts are attacker-controlled. Browsers use OTS (C++) for the same job | Sprint 4 |
+| 39 | On a 256-colour display, the page is dithered to a palette of our own: a 6×6×6 colour cube and 20 greys between its six (236 colours, leaving Windows its 20). An 8×8 ordered (Bayer) dither, anchored to the page so that scrolling doesn't move the pattern; colours whose channels are within 16 of each other are dithered along the greys | Left to itself, Windows rounds each pixel of a true-colour picture to the nearest of the colours it has, which bands photographs and gradients. An ordered dither works on any rectangle by itself, so only what's painted is converted, and moved pixels still match. The greys keep text edges and the pale backgrounds most sites use smooth; the cube's steps (51) are too coarse for a grey's faint tint anyway. `--dither` shows the result on any display | Sprint 4 |
 
 ## Risks
 
@@ -178,6 +179,9 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 - Started from `main` after PR #6 merged Sprint 3.
 - George's choices: fonts for other scripts come from Windows first, then an optional font pack on the CD and in the zip (decision 36); this sprint covers scripts written one character after another, plus the old Chinese, Japanese and Korean encodings (decision 37).
+- **Pictures:** Wuffs (decision 35) decodes PNG, JPEG, GIF, BMP, WebP and ICO (`tc_image`), with unit tests and an image fuzzer. Pages show `<img>` (with `srcset`, `sizes` and `<picture>`), CSS background layers with `url()` and `linear-gradient()`, and `list-style-image`. The browser loads pictures on a second thread after showing the page, and keeps decoded pixels within a memory budget (an eighth of the PC's memory, 8 to 64 MB), dropping the ones drawn longest ago. `FETCH --render` and `tachyon-render` load them too.
+- **Animation:** painting tells the page where each animated picture went, and a timer moves the ones on screen to their next frame and repaints only them. Pictures scrolled away, or in a minimised window, pause.
+- **256 colours** (decision 39): `tc_dither` and an 8 bpp copy of the view's back buffer, with the palette realised as Windows expects (`WM_QUERYNEWPALETTE`, `WM_PALETTECHANGED`). `TACHYON.EXE --dither` and `tachyon-render --dither` show the result on any display. Wine 9 reports 16 bits per pixel even on an 8-bit X server, so the palette path awaits a real Windows 95 at 256 colours.
 
 ### Sprint 3: First Light (2026-10-21 to 22; merged as PRs #5 and #6)
 

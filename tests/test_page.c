@@ -291,7 +291,8 @@ static void test_png(void)
     tc_surface_free(&s);
 }
 
-/* Images served from the test files: the URL's last part is the file. */
+/* Images served from the test files: the URL's last part is the file
+   (any query ignored, so one file can be two pictures). */
 typedef struct image_server {
     char asked[1024];
     unsigned count;
@@ -301,7 +302,7 @@ static int serve_image(void *ctx, const char *url, tc_buf *body, char *charset, 
 {
     image_server *s = ctx;
     const char *name = strrchr(url, '/');
-    size_t i;
+    size_t i, len;
     (void)charset_size;
     charset[0] = '\0';
     s->count++;
@@ -310,8 +311,9 @@ static int serve_image(void *ctx, const char *url, tc_buf *body, char *charset, 
         strcat(s->asked, " ");
     }
     name = name ? name + 1 : url;
+    len = strcspn(name, "?");
     for (i = 0; i < tc_test_blob_count; i++)
-        if (strcmp(tc_test_blobs[i].name, name) == 0)
+        if (strlen(tc_test_blobs[i].name) == len && strncmp(tc_test_blobs[i].name, name, len) == 0)
             return tc_buf_append(body, tc_test_blobs[i].data, tc_test_blobs[i].len);
     return TC_ERR_INVALID;
 }
@@ -444,6 +446,54 @@ static void test_image_memory(void)
     tc_font_set_free(fonts);
 }
 
+/* frames.gif: red for 100 ms, a green corner for 200, blue for 300. */
+static void test_animation(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    tc_surface s;
+    tc_rect dirty;
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/", "<!DOCTYPE html><style>body { margin: 0 } img { display: block }</style>"
+                                         "<img src=frames.gif><img src=pattern.png><div style='height: 1000px'></div>"
+                                         "<img src=frames.gif?2>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_load_images(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    if (tc_surface_init(&s, 40, 40) != TC_OK)
+        return;
+    /* Nothing painted yet: nothing to animate. */
+    TC_CHECK_INT(tc_page_animate(&p, 1000, &dirty), 0);
+    TC_CHECK(tc_rect_is_empty(dirty));
+    tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 0);
+    TC_CHECK_INT(tc_surface_get(&s, 0, 0), 0xFF0000);
+    /* Painted: the first frame's 100 ms start now. */
+    TC_CHECK_INT(tc_page_animate(&p, 1000, &dirty), 100);
+    TC_CHECK_INT(tc_page_animate(&p, 1060, &dirty), 40);
+    TC_CHECK(tc_rect_is_empty(dirty));
+    TC_CHECK_INT(tc_page_animate(&p, 1100, &dirty), 200);
+    TC_CHECK(dirty.x == 0 && dirty.y == 0 && dirty.w == 4 && dirty.h == 4);
+    tc_paint(p.layout, &s, dirty, 0, 0);
+    TC_CHECK_INT(tc_surface_get(&s, 0, 0), 0x00FF00);
+    TC_CHECK_INT(tc_surface_get(&s, 3, 3), 0xFF0000);
+    TC_CHECK_INT(tc_page_animate(&p, 1150, &dirty), 150);
+    /* A late call skips ahead rather than racing through frames. */
+    TC_CHECK_INT(tc_page_animate(&p, 2000, &dirty), 300);
+    TC_CHECK(!tc_rect_is_empty(dirty));
+    /* Scrolled away before the new frame is painted: it pauses. */
+    tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 500);
+    TC_CHECK_INT(tc_page_animate(&p, 2300, &dirty), 0);
+    TC_CHECK(tc_rect_is_empty(dirty));
+    /* The second copy comes into view, in document coordinates. */
+    tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 990);
+    TC_CHECK_INT(tc_page_animate(&p, 3000, &dirty), 100);
+    TC_CHECK_INT(tc_page_animate(&p, 3100, &dirty), 200);
+    TC_CHECK(dirty.x == 0 && dirty.y == 1006 && dirty.w == 4 && dirty.h == 4);
+    tc_surface_free(&s);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
 void tc_suite_page(void)
 {
     TC_RUN(test_style_sheets);
@@ -453,4 +503,5 @@ void tc_suite_page(void)
     TC_RUN(test_image_sources);
     TC_RUN(test_image_loading);
     TC_RUN(test_image_memory);
+    TC_RUN(test_animation);
 }

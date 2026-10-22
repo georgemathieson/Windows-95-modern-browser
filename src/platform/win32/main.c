@@ -1,12 +1,12 @@
 /* Tachyon for Windows 95: program entry point.
  *
- *   TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE] [--fonts DIR] [--smoke-test]
- *               [--crash-test]
+ *   TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE] [--fonts DIR] [--dither]
+ *               [--smoke-test] [--crash-test]
  *
  * --proxy sends every request through an HTTP proxy. --cacert trusts the
  * certificate authorities in a PEM file too (a company proxy's, say).
  * --fonts adds the TrueType fonts in a directory (for Wine, which lacks
- * Windows 95's).
+ * Windows 95's). --dither shows pages as a 256-colour display would.
  * --smoke-test opens the window, waits for the first paint and exits with 0
  * (CI runs this under Wine). --crash-test crashes on purpose once the window
  * is open, to test the crash report in TACHYON.LOG. */
@@ -51,6 +51,8 @@ static void parse_command_line(char *cmdline, tw_shell_options *opts)
             cacert_file = strtok(NULL, " \t");
         } else if (strcmp(token, "--fonts") == 0) {
             fonts_dir = strtok(NULL, " \t");
+        } else if (strcmp(token, "--dither") == 0) {
+            tw_view_force_dither(1);
         } else if (!opts->start_url) {
             opts->start_url = token;
         }

@@ -182,7 +182,11 @@ typedef struct page_image {
     tc_image *image;          /* once it's arrived */
     uint8_t state;            /* TC_PAGE_IMAGE_* */
     uint8_t waited;           /* layout wanted its size before it came */
+    uint8_t shown;            /* an animation painted since its frame changed */
+    uint8_t ended;            /* an animation that has played all its loops */
     uint32_t drawn;           /* when its pixels were last asked for */
+    tc_rect area;             /* where it's been painted since its frame changed */
+    uint32_t due;             /* when its next frame is (tc_page_animate's clock), or 0 */
 } page_image;
 
 /* A pointer (an element, a style's url()) and the picture it shows. */
@@ -588,7 +592,7 @@ static tc_image *source_url(void *ctx, const tc_css_image *css)
     return r && im->items[r->index].state == TC_PAGE_IMAGE_LOADED ? im->items[r->index].image : NULL;
 }
 
-static const tc_surface *source_pixels(void *ctx, tc_image *img)
+static const tc_surface *source_pixels(void *ctx, tc_image *img, tc_rect where)
 {
     struct tc_page_images *im = ctx;
     uint32_t i, mine = 0;
@@ -597,6 +601,10 @@ static const tc_surface *source_pixels(void *ctx, tc_image *img)
         if (im->items[i].image == img)
             mine = i;
     im->items[mine].drawn = ++im->clock;
+    if (tc_image_frames(img) > 1 && !tc_rect_is_empty(where)) {
+        im->items[mine].shown = 1;
+        im->items[mine].area = tc_rect_union(im->items[mine].area, where);
+    }
     if (tc_image_pixels(img))
         return tc_image_pixels(img);
     err = tc_image_decode(img, (uint32_t)TC_MIN(im->memory / 16, 0xFFFFFFFFu));
@@ -606,6 +614,8 @@ static const tc_surface *source_pixels(void *ctx, tc_image *img)
         return NULL;
     }
     im->decoded += tc_image_memory(img);
+    im->items[mine].ended = 0; /* back at the first frame */
+    im->items[mine].due = 0;
     /* Over budget: drop the pixels drawn longest ago. */
     while (im->decoded > im->memory) {
         uint32_t oldest = (uint32_t)-1, victim = 0;
@@ -664,11 +674,16 @@ static int find_images(tc_page *p, const tc_styled *styled, const tc_media_env *
 {
     struct tc_page_images *im = page_images(p);
     const tc_node *root, *n;
+    uint32_t i;
     int err = TC_OK;
     if (!im)
         return TC_ERR_NOMEM;
     im->base = &p->base;
     root = &p->html.doc->node;
+    for (i = 0; i < im->n; i++) { /* a new layout puts them elsewhere */
+        im->items[i].shown = 0;
+        im->items[i].area = tc_rect_make(0, 0, 0, 0);
+    }
     for (n = tc_dom_next(root, root); n && !err; n = tc_dom_next(root, n)) {
         const tc_element *el = (const tc_element *)n;
         const tc_element_styles *es;
@@ -752,6 +767,43 @@ int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, 
         relayout |= tc_page_image_arrived(p, i, img);
     }
     return relayout && p->layout ? tc_page_layout(p, fonts, p->width, p->height) : TC_OK;
+}
+
+uint32_t tc_page_animate(tc_page *p, uint32_t now_ms, tc_rect *dirty)
+{
+    struct tc_page_images *im = p->images;
+    uint32_t i, wait = 0;
+    *dirty = tc_rect_make(0, 0, 0, 0);
+    for (i = 0; im && i < im->n; i++) {
+        page_image *e = &im->items[i];
+        uint32_t delay;
+        if (e->state != TC_PAGE_IMAGE_LOADED || e->ended || tc_image_frames(e->image) <= 1)
+            continue;
+        if (!e->shown || !tc_image_pixels(e->image)) {
+            e->due = 0; /* off screen: paused until it's painted again */
+            continue;
+        }
+        if (!e->due) {
+            e->due = now_ms + tc_image_delay(e->image);
+        } else if ((int32_t)(now_ms - e->due) >= 0) {
+            size_t before = tc_image_memory(e->image);
+            if (!tc_image_next_frame(e->image, &delay)) {
+                e->ended = 1;
+                continue;
+            }
+            im->decoded = im->decoded - TC_MIN(im->decoded, before) + tc_image_memory(e->image);
+            *dirty = tc_rect_union(*dirty, e->area);
+            e->shown = 0;
+            e->area = tc_rect_make(0, 0, 0, 0);
+            e->due += delay;
+            if ((int32_t)(now_ms - e->due) >= 0) /* fallen behind: skip ahead, don't race */
+                e->due = now_ms + delay;
+        }
+        delay = e->due - now_ms;
+        if (!wait || delay < wait)
+            wait = delay ? delay : 1;
+    }
+    return wait;
 }
 
 void tc_page_set_image_memory(tc_page *p, size_t bytes)

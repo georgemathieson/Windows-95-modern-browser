@@ -40,6 +40,8 @@ void tc_surface_free(tc_surface *s);
 
 tc_rect tc_rect_make(int x, int y, int w, int h);
 tc_rect tc_rect_intersect(tc_rect a, tc_rect b);
+/* The smallest rect holding both (an empty one adds nothing). */
+tc_rect tc_rect_union(tc_rect a, tc_rect b);
 int tc_rect_is_empty(tc_rect r);
 
 /* Pixel at (x, y) as 0x00RRGGBB; 0 outside the surface. */

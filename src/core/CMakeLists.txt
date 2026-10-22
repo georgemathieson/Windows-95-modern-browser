@@ -68,6 +68,7 @@ add_library(tachyon_core STATIC
   tc_css_color.c
   tc_css_syntax.c
   tc_css_values.c
+  tc_dither.c
   tc_dom.c
   tc_encoding.c
   tc_entropy.c

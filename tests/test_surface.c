@@ -75,6 +75,11 @@ static void test_rect_intersect(void)
     TC_CHECK_INT(r.w, 5);
     TC_CHECK_INT(r.h, 5);
     TC_CHECK(tc_rect_is_empty(tc_rect_intersect(tc_rect_make(0, 0, 1, 1), tc_rect_make(2, 2, 1, 1))));
+    r = tc_rect_union(tc_rect_make(0, 0, 10, 10), tc_rect_make(5, -5, 10, 10));
+    TC_CHECK(r.x == 0 && r.y == -5 && r.w == 15 && r.h == 15);
+    r = tc_rect_union(tc_rect_make(100, 100, 0, 5), tc_rect_make(1, 2, 3, 4)); /* empty: ignored */
+    TC_CHECK(r.x == 1 && r.y == 2 && r.w == 3 && r.h == 4);
+    TC_CHECK(tc_rect_is_empty(tc_rect_union(tc_rect_make(1, 1, 0, 0), tc_rect_make(5, 5, 2, 0))));
 }
 
 void tc_suite_surface(void)

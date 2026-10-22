@@ -70,6 +70,14 @@ int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, 
    it isn't drawn. */
 void tc_page_set_image_memory(tc_page *p, size_t bytes);
 
+/* Animated pictures. Painting notes which are on screen and where; this
+   moves those whose time has come on to their next frame. now_ms: any
+   millisecond clock (it may wrap). *dirty: what to paint again, in
+   document coordinates (empty for nothing). Returns the milliseconds until
+   it should be called again, or 0 when nothing on screen is animating
+   (painting an animation starts it again). */
+uint32_t tc_page_animate(tc_page *p, uint32_t now_ms, tc_rect *dirty);
+
 /* The link at a point in the document: the a or area element with an href,
    and its URL (free it with tc_url_free). NULL if there's none. */
 const tc_element *tc_page_link_at(const tc_page *p, float x, float y, tc_url *url);

@@ -64,6 +64,7 @@ add_executable(tachyon_tests
   test_buf.c
   test_css.c
   test_css_values.c
+  test_dither.c
   test_dom.c
   test_encoding.c
   test_fixup.c

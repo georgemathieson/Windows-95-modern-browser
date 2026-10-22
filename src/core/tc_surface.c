@@ -63,6 +63,20 @@ tc_rect tc_rect_intersect(tc_rect a, tc_rect b)
     return tc_rect_make(x0, y0, x1 - x0, y1 - y0);
 }
 
+tc_rect tc_rect_union(tc_rect a, tc_rect b)
+{
+    int x0, y0, x1, y1;
+    if (tc_rect_is_empty(a))
+        return tc_rect_is_empty(b) ? tc_rect_make(0, 0, 0, 0) : b;
+    if (tc_rect_is_empty(b))
+        return a;
+    x0 = TC_MIN(a.x, b.x);
+    y0 = TC_MIN(a.y, b.y);
+    x1 = TC_MAX(a.x + a.w, b.x + b.w);
+    y1 = TC_MAX(a.y + a.h, b.y + b.h);
+    return tc_rect_make(x0, y0, x1 - x0, y1 - y0);
+}
+
 int tc_rect_is_empty(tc_rect r)
 {
     return r.w <= 0 || r.h <= 0;

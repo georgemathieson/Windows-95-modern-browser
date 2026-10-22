@@ -827,6 +827,16 @@ static LRESULT CALLBACK shell_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
         on_command(sh, LOWORD(wp));
         return 0;
+    case WM_QUERYNEWPALETTE:
+        return tw_view_realize_palette(sh->view);
+    case WM_PALETTECHANGED:
+        /* Another program's colours: the view maps its own again. */
+        if ((HWND)wp != hwnd && !IsChild(hwnd, (HWND)wp))
+            tw_view_realize_palette(sh->view);
+        return 0;
+    case WM_DISPLAYCHANGE:
+        tw_view_display_changed(sh->view);
+        return 0;
     case WM_TIMER:
         if (wp == SMOKE_TIMER) {
             KillTimer(hwnd, SMOKE_TIMER);

@@ -35,6 +35,7 @@ void tc_test_run(const char *name, void (*fn)(void))
 void tc_suite_buf(void);
 void tc_suite_css(void);
 void tc_suite_css_values(void);
+void tc_suite_dither(void);
 void tc_suite_dom(void);
 void tc_suite_encoding(void);
 void tc_suite_fixup(void);
@@ -58,6 +59,7 @@ int main(void)
     tc_suite_buf();
     tc_suite_css();
     tc_suite_css_values();
+    tc_suite_dither();
     tc_suite_dom();
     tc_suite_encoding();
     tc_suite_fixup();

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_dither.h"
 #include "tc_log.h"
 #include "tc_outline.h"
 #include "tc_surface.h"
@@ -22,6 +23,7 @@ enum display { D_BLANK, D_PAGE, D_TREE, D_SOURCE };
 #define RELAYOUT_MS    150   /* lay out again this long after the last resize */
 #define HOVER_TIMER    2
 #define IMAGE_TIMER    3
+#define ANIM_TIMER     4
 #define IMAGE_MS       250   /* pictures arriving together are shown together */
 #define HOVER_MS       100   /* Windows 95 has no TrackMouseEvent: poll while over a link */
 #define LINE_SCROLL    40    /* pixels per arrow key */
@@ -46,6 +48,8 @@ typedef struct view {
     tc_font_set *fonts;
     int image_relayout;          /* a picture arrived that layout was waiting for */
     int image_timer;             /* IMAGE_TIMER is set */
+    int anim_timer;              /* ANIM_TIMER is set */
+    tc_rect stale;               /* animations to paint again, in document coordinates */
     tw_view_mode mode;
     char url[2048];
     char warning[512];
@@ -83,6 +87,15 @@ typedef struct view {
     HBITMAP old_bitmap;
     uint32_t *bits;
     int width, height;
+    /* On a 256-colour display, what's painted is dithered (decision 39) into
+       an 8 bpp DIB section in `dc8`, whose colours are `palette`'s. */
+    HDC dc8;
+    HBITMAP bitmap8, old_bitmap8;
+    uint8_t *bits8;
+    int stride8;
+    int depth;           /* the display's bits per pixel */
+    int palette_display;
+    HPALETTE palette;
 
     HFONT font_small, font_mono;
     int paint_count;
@@ -94,6 +107,8 @@ typedef struct view {
 
 /* IntelliPoint's wheel message on Windows 95, which has no WM_MOUSEWHEEL. */
 static UINT msh_mousewheel;
+/* --dither: dither on any display, to see what a 256-colour one shows. */
+static int force_dither;
 
 static view *get_view(HWND hwnd)
 {
@@ -117,6 +132,18 @@ static enum display display_of(const view *v)
 
 /* ---- Back buffer ---- */
 
+static void free_dither_buffer(view *v)
+{
+    if (v->dc8) {
+        SelectObject(v->dc8, v->old_bitmap8);
+        DeleteObject(v->bitmap8);
+        DeleteDC(v->dc8);
+    }
+    v->dc8 = NULL;
+    v->bitmap8 = v->old_bitmap8 = NULL;
+    v->bits8 = NULL;
+}
+
 static void free_backbuffer(view *v)
 {
     if (v->dc) {
@@ -128,6 +155,69 @@ static void free_backbuffer(view *v)
     v->bitmap = v->old_bitmap = NULL;
     v->bits = NULL;
     v->width = v->height = 0;
+    free_dither_buffer(v);
+}
+
+static HPALETTE make_palette(void)
+{
+    struct {
+        WORD version, count;
+        PALETTEENTRY entries[TC_DITHER_COLOURS];
+    } lp;
+    uint32_t colours[TC_DITHER_COLOURS];
+    int i;
+    tc_dither_palette(colours);
+    lp.version = 0x300;
+    lp.count = TC_DITHER_COLOURS;
+    for (i = 0; i < TC_DITHER_COLOURS; i++) {
+        lp.entries[i].peRed = (BYTE)(colours[i] >> 16);
+        lp.entries[i].peGreen = (BYTE)(colours[i] >> 8);
+        lp.entries[i].peBlue = (BYTE)colours[i];
+        lp.entries[i].peFlags = 0;
+    }
+    return CreatePalette((LOGPALETTE *)&lp);
+}
+
+/* The 8 bpp copy of the back buffer the palette's colours are drawn from.
+   Without it, Windows rounds to its nearest colours. */
+static void make_dither_buffer(view *v, HDC screen)
+{
+    struct {
+        BITMAPINFOHEADER header;
+        RGBQUAD colours[256];
+    } bmi;
+    uint32_t colours[TC_DITHER_COLOURS];
+    void *bits = NULL;
+    int i;
+
+    memset(&bmi, 0, sizeof bmi);
+    bmi.header.biSize = sizeof bmi.header;
+    bmi.header.biWidth = v->width;
+    bmi.header.biHeight = -v->height;
+    bmi.header.biPlanes = 1;
+    bmi.header.biBitCount = 8;
+    bmi.header.biCompression = BI_RGB;
+    bmi.header.biClrUsed = TC_DITHER_COLOURS;
+    tc_dither_palette(colours);
+    for (i = 0; i < TC_DITHER_COLOURS; i++) {
+        bmi.colours[i].rgbRed = (BYTE)(colours[i] >> 16);
+        bmi.colours[i].rgbGreen = (BYTE)(colours[i] >> 8);
+        bmi.colours[i].rgbBlue = (BYTE)colours[i];
+    }
+    v->dc8 = CreateCompatibleDC(screen);
+    v->bitmap8 = CreateDIBSection(screen, (BITMAPINFO *)&bmi, DIB_RGB_COLORS, &bits, NULL, 0);
+    if (!v->dc8 || !v->bitmap8 || !bits) {
+        if (v->bitmap8)
+            DeleteObject(v->bitmap8);
+        if (v->dc8)
+            DeleteDC(v->dc8);
+        v->dc8 = NULL;
+        v->bitmap8 = NULL;
+        return;
+    }
+    v->old_bitmap8 = SelectObject(v->dc8, v->bitmap8);
+    v->bits8 = bits;
+    v->stride8 = (v->width + 3) & ~3;
 }
 
 static int ensure_backbuffer(view *v, int width, int height)
@@ -135,6 +225,7 @@ static int ensure_backbuffer(view *v, int width, int height)
     BITMAPINFO bmi;
     HDC screen;
     void *bits = NULL;
+    int depth;
 
     if (v->dc && v->width == width && v->height == height)
         return 1;
@@ -154,7 +245,6 @@ static int ensure_backbuffer(view *v, int width, int height)
     screen = GetDC(v->hwnd);
     v->dc = CreateCompatibleDC(screen);
     v->bitmap = CreateDIBSection(screen, &bmi, DIB_RGB_COLORS, &bits, NULL, 0);
-    ReleaseDC(v->hwnd, screen);
     if (!v->dc || !v->bitmap || !bits) {
         if (v->bitmap)
             DeleteObject(v->bitmap);
@@ -162,12 +252,25 @@ static int ensure_backbuffer(view *v, int width, int height)
             DeleteDC(v->dc);
         v->dc = NULL;
         v->bitmap = NULL;
+        ReleaseDC(v->hwnd, screen);
         return 0;
     }
     v->old_bitmap = SelectObject(v->dc, v->bitmap);
     v->bits = bits;
     v->width = width;
     v->height = height;
+    depth = GetDeviceCaps(screen, BITSPIXEL) * GetDeviceCaps(screen, PLANES);
+    v->palette_display = (GetDeviceCaps(screen, RASTERCAPS) & RC_PALETTE) && depth == 8;
+    if (depth != v->depth) {
+        tc_log("display: %d bits per pixel%s%s", depth, v->palette_display ? ", a palette" : "",
+               v->palette_display || force_dither ? "; dithering" : "");
+        v->depth = depth;
+    }
+    if (v->palette_display && !v->palette)
+        v->palette = make_palette();
+    if (v->palette_display || force_dither)
+        make_dither_buffer(v, screen);
+    ReleaseDC(v->hwnd, screen);
     return 1;
 }
 
@@ -614,23 +717,70 @@ static void render(view *v)
     v->dirty = 0;
 }
 
+/* Move animated pictures on to their next frames, mark where they need
+   painting, and wait for the next one due. */
+static void animate(view *v)
+{
+    tc_rect dirty;
+    uint32_t wait;
+    if (v->anim_timer)
+        KillTimer(v->hwnd, ANIM_TIMER);
+    v->anim_timer = 0;
+    if (!v->has_page || display_of(v) != D_PAGE || !v->page.layout)
+        return;
+    wait = tc_page_animate(&v->page, GetTickCount(), &dirty);
+    if (!tc_rect_is_empty(dirty)) {
+        RECT r;
+        v->stale = tc_rect_union(v->stale, dirty);
+        SetRect(&r, dirty.x - v->sx, dirty.y - v->sy, dirty.x - v->sx + dirty.w, dirty.y - v->sy + dirty.h);
+        InvalidateRect(v->hwnd, &r, FALSE);
+    }
+    if (wait)
+        v->anim_timer = SetTimer(v->hwnd, ANIM_TIMER, wait, NULL) != 0;
+}
+
 static void on_paint(view *v)
 {
     PAINTSTRUCT ps;
     RECT client;
+    HPALETTE old_palette = NULL;
     HDC dc = BeginPaint(v->hwnd, &ps);
 
     GetClientRect(v->hwnd, &client);
     if (ensure_backbuffer(v, client.right, client.bottom)) {
-        if (v->dirty)
+        if (v->dirty) {
             render(v);
+        } else if (!tc_rect_is_empty(v->stale) && display_of(v) == D_PAGE && v->page.layout) {
+            GdiFlush();
+            paint_page_area(v, tc_rect_make(v->stale.x - v->sx, v->stale.y - v->sy, v->stale.w, v->stale.h));
+        }
+        v->stale = tc_rect_make(0, 0, 0, 0);
+        if (v->bits8) {
+            /* The pattern stays put on the page as it scrolls. */
+            int page = display_of(v) == D_PAGE;
+            tc_surface s;
+            GdiFlush();
+            tc_surface_wrap(&s, v->bits, v->width, v->height, v->width);
+            tc_dither(&s, tc_rect_make(ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right - ps.rcPaint.left,
+                                       ps.rcPaint.bottom - ps.rcPaint.top),
+                      v->bits8, v->stride8, page ? v->sx : 0, page ? v->sy : 0);
+        }
+        if (v->palette_display && v->palette) {
+            old_palette = SelectPalette(dc, v->palette, FALSE);
+            RealizePalette(dc);
+        }
         BitBlt(dc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right - ps.rcPaint.left,
-               ps.rcPaint.bottom - ps.rcPaint.top, v->dc, ps.rcPaint.left, ps.rcPaint.top, SRCCOPY);
+               ps.rcPaint.bottom - ps.rcPaint.top, v->bits8 ? v->dc8 : v->dc, ps.rcPaint.left, ps.rcPaint.top,
+               SRCCOPY);
+        if (old_palette)
+            SelectPalette(dc, old_palette, TRUE);
     } else {
         FillRect(dc, &client, (HBRUSH)GetStockObject(WHITE_BRUSH));
     }
     EndPaint(v->hwnd, &ps);
     v->paint_count++;
+    if (!v->anim_timer) /* animations just painted start playing */
+        animate(v);
 }
 
 /* ---- Input ---- */
@@ -885,6 +1035,10 @@ static void clear_document(view *v)
     v->selected = -1;
     v->sx = v->sy = 0;
     v->doc_w = v->doc_h = 0;
+    if (v->anim_timer)
+        KillTimer(v->hwnd, ANIM_TIMER);
+    v->anim_timer = 0;
+    v->stale = tc_rect_make(0, 0, 0, 0);
     if (v->hover)
         set_hover(v, -1, -1);
     v->pressed = NULL;
@@ -949,6 +1103,8 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             else if (display_of(v) == D_PAGE)
                 redraw(v);
             v->image_relayout = 0;
+        } else if (wp == ANIM_TIMER) {
+            animate(v);
         }
         return 0;
     case WM_VSCROLL:
@@ -999,7 +1155,10 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         KillTimer(hwnd, RELAYOUT_TIMER);
         KillTimer(hwnd, HOVER_TIMER);
         KillTimer(hwnd, IMAGE_TIMER);
+        KillTimer(hwnd, ANIM_TIMER);
         free_backbuffer(v);
+        if (v->palette)
+            DeleteObject(v->palette);
         DeleteObject(v->font_small);
         DeleteObject(v->font_mono);
         clear_document(v);
@@ -1417,6 +1576,38 @@ void tw_view_show_fonts(HWND hwnd)
     tc_buf_append_str(&html, "</table></div></body></html>");
     tw_view_show_html(hwnd, "about:fonts", html.data ? tc_buf_cstr(&html) : "");
     tc_buf_free(&html);
+}
+
+void tw_view_force_dither(int on)
+{
+    force_dither = on;
+}
+
+int tw_view_realize_palette(HWND hwnd)
+{
+    view *v = get_view(hwnd);
+    HPALETTE old;
+    UINT changed;
+    HDC dc;
+    if (!v || !v->palette_display || !v->palette)
+        return 0;
+    dc = GetDC(hwnd);
+    old = SelectPalette(dc, v->palette, FALSE);
+    changed = RealizePalette(dc);
+    SelectPalette(dc, old, TRUE);
+    ReleaseDC(hwnd, dc);
+    if (changed)
+        InvalidateRect(hwnd, NULL, FALSE);
+    return changed != 0;
+}
+
+void tw_view_display_changed(HWND hwnd)
+{
+    view *v = get_view(hwnd);
+    if (!v)
+        return;
+    free_backbuffer(v); /* made again for the new colour depth */
+    InvalidateRect(hwnd, NULL, FALSE);
 }
 
 const tc_page *tw_view_page(HWND hwnd)

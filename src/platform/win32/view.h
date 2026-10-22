@@ -71,6 +71,16 @@ const tc_page *tw_view_page(HWND view);
    if it failed). Shown, or the page laid out again, a moment later. */
 void tw_view_image_arrived(HWND view, size_t index, tc_image *img);
 
+/* Dither to 256 colours (decision 39) on any display, not only a
+   256-colour one, to see what one shows (--dither). */
+void tw_view_force_dither(int on);
+/* The top-level window's palette and display messages, passed on. On
+   WM_QUERYNEWPALETTE and WM_PALETTECHANGED (from another window) the view
+   realises its palette, repainting if the colours changed; returns whether
+   they did. On WM_DISPLAYCHANGE it checks the colour depth again. */
+int tw_view_realize_palette(HWND view);
+void tw_view_display_changed(HWND view);
+
 /* How many times the view has been painted (the smoke test checks this). */
 int tw_view_paint_count(HWND view);
 

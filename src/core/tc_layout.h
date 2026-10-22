@@ -95,8 +95,9 @@ typedef struct tc_image_source {
     /* The image a style's url() names, or NULL. */
     tc_image *(*url)(void *ctx, const tc_css_image *ref);
     /* An image's pixels to draw, decoded now if they need to be (NULL if
-       they can't be). */
-    const tc_surface *(*pixels)(void *ctx, tc_image *img);
+       they can't be). where: the part of the document it covers that's
+       being painted, so animations know where to paint again. */
+    const tc_surface *(*pixels)(void *ctx, tc_image *img, tc_rect where);
     void *ctx;
 } tc_image_source;
 

@@ -80,6 +80,10 @@ addresses; start TACHYON.EXE with `--cacert tests/server/certs/ca.pem`.
 the wrong-clock warning, configure a build with `-DTACHYON_BUILD_UNIX=` set
 in the future.
 
+`TACHYON.EXE --dither` shows pages as a 256-colour display would. Wine
+can't be a 256-colour display (it reports 16 bits per pixel even on an
+8-bit Xvfb), so only Windows 95 tests the palette itself.
+
 ### Networking from Claude's container
 
 Outbound connections go through an egress gateway that re-signs TLS with its
@@ -105,9 +109,10 @@ changing the tokenizer or tree builder; crashes land in `build/fuzz/crashes`.
 
 ### Rendering and the reference tests
 
-`build/host/tools/render/tachyon-render [--width N] [--boxes] page.html
-out.png` renders a page file to PNG on the host (`--boxes` prints the box
-tree), the quickest way to see a layout change. `tachyon-fetch --render
+`build/host/tools/render/tachyon-render [--width N] [--boxes] [--dither]
+page.html out.png` renders a page file to PNG on the host (`--boxes` prints
+the box tree, `--dither` shows it in 256 colours), the quickest way to see a
+layout change. `tachyon-fetch --render
 [--png FILE] URL` does the same for a URL, style sheets and all, and prints
 timings; FETCH.EXE does it under Wine and on Windows 95.
 

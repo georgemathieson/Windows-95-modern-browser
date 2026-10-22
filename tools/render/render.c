@@ -1,12 +1,13 @@
 /* tachyon-render: lay out and paint a page from a file into a PNG.
  *
  *   tachyon-render [--width N] [--height N] [--viewport] [--fonts DIR] [--boxes]
- *                  page.html out.png
+ *                  [--dither] page.html out.png
  *
  *   --width, --height  the viewport (800 x 600)
  *   --viewport         only the viewport, not the whole page
  *   --fonts DIR        fonts from DIR, not the Liberation or system fonts
  *   --boxes            print the box tree
+ *   --dither           as a 256-colour display shows it
  *
  * Style sheets linked from the page are read from files beside it. Timings
  * and statistics go to stderr. Built for the host (tachyon-render) and for
@@ -16,18 +17,39 @@
 #include <string.h>
 
 #include "render_page.h"
+#include "tc_dither.h"
 #include "tc_png.h"
 
 static int usage(void)
 {
     fprintf(stderr,
-            "usage: tachyon-render [--width N] [--height N] [--viewport] [--fonts DIR] [--boxes] page.html out.png\n");
+            "usage: tachyon-render [--width N] [--height N] [--viewport] [--fonts DIR] [--boxes] [--dither] page.html "
+            "out.png\n");
     return 1;
+}
+
+/* Through the palette and back. */
+static void dither_surface(tc_surface *s)
+{
+    uint32_t palette[TC_DITHER_COLOURS];
+    uint8_t *index = malloc((size_t)s->width * (size_t)s->height);
+    int x, y;
+    if (!index)
+        return;
+    tc_dither_palette(palette);
+    tc_dither(s, tc_rect_make(0, 0, s->width, s->height), index, s->width, 0, 0);
+    for (y = 0; y < s->height; y++) {
+        uint32_t *row = s->pixels + (size_t)y * (size_t)s->stride;
+        const uint8_t *in = index + (size_t)y * (size_t)s->width;
+        for (x = 0; x < s->width; x++)
+            row[x] = palette[in[x]];
+    }
+    free(index);
 }
 
 int main(int argc, char **argv)
 {
-    int i, w = 800, h = 600, full = 1, boxes = 0, err;
+    int i, w = 800, h = 600, full = 1, boxes = 0, dither = 0, err;
     const char *fonts_dir = NULL, *in = NULL, *out = NULL;
     tc_font_set *fonts;
     rendered r;
@@ -43,6 +65,8 @@ int main(int argc, char **argv)
             full = 0;
         else if (strcmp(argv[i], "--boxes") == 0)
             boxes = 1;
+        else if (strcmp(argv[i], "--dither") == 0)
+            dither = 1;
         else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc)
             fonts_dir = argv[++i];
         else if (argv[i][0] == '-' && argv[i][1])
@@ -68,6 +92,8 @@ int main(int argc, char **argv)
     }
     if (boxes)
         fwrite(r.boxes.data ? r.boxes.data : "", 1, r.boxes.len, stdout);
+    if (dither)
+        dither_surface(&r.surface);
     tc_buf_init(&png);
     err = tc_png_encode(&r.surface, &png);
     f = err ? NULL : fopen(out, "wb");
