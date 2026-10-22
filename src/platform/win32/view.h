@@ -1,41 +1,66 @@
 /* The content view: the sunken area of the window where pages appear.
  *
- * Until Tachyon renders HTML (Sprint 3) it shows built-in pages, messages
- * such as errors, a parsed page's document tree, and the source of fetched
- * documents. Drawing goes into a tc_surface backed by a DIB section and is
- * blitted to the screen, the path the real renderer will use; text is GDI's
- * for now. */
+ * Pages are laid out and painted by Tachyon's own engine (tc_page) into a
+ * DIB section, then blitted to the screen; scrolling moves what's already
+ * drawn and paints only the strip that comes into view. Built-in pages
+ * (about:, errors) are HTML too. A document's tree and its source are a
+ * menu away, drawn with GDI. */
 #ifndef TW_VIEW_H
 #define TW_VIEW_H
 
 #include <windows.h>
 
-#include "tc_html_parser.h"
+#include "tc_font.h"
+#include "tc_page.h"
 
 #define TW_VIEW_CLASS "TachyonView"
 
-int tw_view_register(HINSTANCE instance);
-HWND tw_view_create(HWND parent, HINSTANCE instance, int id);
+/* Sent to the parent. WM_TW_HOVER: the mouse is over a link (lParam: its
+   URL, UTF-8) or has left one (lParam NULL). WM_TW_FOLLOW: a link was
+   clicked (lParam: its URL). The strings last for the call only. */
+#define WM_TW_HOVER  (WM_APP + 10)
+#define WM_TW_FOLLOW (WM_APP + 11)
 
+typedef enum tw_view_mode {
+    TW_MODE_PAGE,   /* the rendered page */
+    TW_MODE_TREE,   /* its document tree */
+    TW_MODE_SOURCE  /* its source */
+} tw_view_mode;
+
+int tw_view_register(HINSTANCE instance);
+HWND tw_view_create(HWND parent, HINSTANCE instance, int id, tc_font_set *fonts);
+
+/* The size pages should be laid out for. */
+void tw_view_page_size(HWND view, int *w, int *h);
+
+/* A page from HTML text (built-in pages). */
+int tw_view_show_html(HWND view, const char *url, const char *html);
 void tw_view_show_home(HWND view);
 void tw_view_show_blank(HWND view);
-/* A message page: a heading in the banner, then text and a smaller detail
-   line (either may be NULL). Used for errors and "loading". */
-void tw_view_show_message(HWND view, const char *url, const char *heading, const char *text,
-                          const char *detail);
-/* A fetched document's source: the response head (status line and headers,
-   drawn in blue) followed by the body. Both are UTF-8. */
+/* A message page: a heading, then text and a smaller detail line (either
+   may be NULL). Used for errors and "loading". */
+void tw_view_show_message(HWND view, const char *url, const char *heading, const char *text, const char *detail);
+/* Built-in information: about:fonts lists the fonts Tachyon found. */
+void tw_view_show_fonts(HWND view);
+
+/* A fetched document that isn't HTML: its source, the response head (in
+   blue) then the body. Both are UTF-8. */
 int tw_view_show_source(HWND view, const char *url, const char *head, size_t head_len, const char *body,
                         size_t body_len);
 
-/* A parsed HTML page: its document tree, or its decoded source after
-   tw_view_set_show_source(view, 1). The view takes over page (leaving it
-   empty). head is the response head, shown above the source. */
-int tw_view_show_document(HWND view, const char *url, const char *head, size_t head_len, tc_html_page *page);
+/* A loaded HTML page. The view takes over page (leaving it empty) and lays
+   it out again if its size has changed. head: the response head, shown
+   above the source. */
+int tw_view_show_page(HWND view, const char *head, size_t head_len, tc_page *page);
 
-/* Whether documents show their source instead of their tree. Returns
-   whether the current page is a document (so the choice is visible). */
-int tw_view_set_show_source(HWND view, int show_source);
+/* Show the page, its tree or its source. Returns whether the current page
+   is a document (so the choice is visible). */
+int tw_view_set_mode(HWND view, tw_view_mode mode);
+
+/* Scroll to a #fragment of the current page; 0 if it's not there. */
+int tw_view_scroll_to_fragment(HWND view, const char *fragment);
+/* The current page's URL (UTF-8), or "" if it has none. */
+const char *tw_view_url(HWND view);
 
 /* A warning shown on the home page, e.g. about the clock (NULL for none). */
 void tw_view_set_warning(HWND view, const char *warning);

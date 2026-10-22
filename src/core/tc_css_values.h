@@ -58,6 +58,13 @@ typedef struct tc_length_basis {
     float viewport_w, viewport_h;
 } tc_length_basis;
 
+/* Lengths stay within +-2^25 px, as in Chromium's layout, so that layout's
+   arithmetic stays finite whatever a page asks for. */
+#define TC_LENGTH_MAX 33554432.0f
+
+/* v limited to +-TC_LENGTH_MAX; NaN becomes 0. */
+float tc_length_clamp(float v);
+
 /* A computed length-percentage: px + pct% of a basis known at layout time,
    or an expression (min/max/clamp mixing pixels and percentages). */
 typedef struct tc_length {

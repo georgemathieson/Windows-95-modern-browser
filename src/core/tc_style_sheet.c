@@ -434,14 +434,15 @@ static int replace_amp(sp *p, tvec *t, const tc_css_value *v, uint32_t n, const 
 }
 
 /* A nested rule's selector, made absolute: "& " in front of each selector
-   without an &, and every & replaced by :is(the parent's selectors). */
+   without an &, and every & replaced by :is(the parent's selectors).
+   TC_ERR_INVALID if a selector is empty. */
 static int nest_selector(sp *p, const tc_css_value *rel, uint32_t nrel, const tc_css_value *parent, uint32_t nparent,
                          tc_css_value **out, uint32_t *nout)
 {
     tc_css_value is[2], ws;
     tvec t = { NULL, 0, 0 };
     uint32_t start = 0, i;
-    int ok = 1;
+    int ok = 1, empty = 0;
 
     memset(is, 0, sizeof is);
     is[0].type = TC_CSS_COLON;
@@ -461,6 +462,10 @@ static int nest_selector(sp *p, const tc_css_value *rel, uint32_t nrel, const tc
         b = i;
         while (b > a && rel[b - 1].type == TC_CSS_WHITESPACE)
             b--;
+        if (a == b) {
+            empty = 1;
+            break;
+        }
         if (start > 0) {
             tc_css_value comma;
             memset(&comma, 0, sizeof comma);
@@ -474,7 +479,7 @@ static int nest_selector(sp *p, const tc_css_value *rel, uint32_t nrel, const tc
             ok = replace_amp(p, &t, rel + a, b - a, is, 0);
         start = i + 1;
     }
-    if (ok) {
+    if (ok && !empty) {
         *out = tc_arena_alloc(p->tmp, (t.len ? t.len : 1) * sizeof **out);
         if (*out)
             memcpy(*out, t.items, t.len * sizeof **out);
@@ -482,7 +487,7 @@ static int nest_selector(sp *p, const tc_css_value *rel, uint32_t nrel, const tc
         ok = *out != NULL;
     }
     free(t.items);
-    return ok;
+    return !ok ? TC_ERR_NOMEM : empty ? TC_ERR_INVALID : TC_OK;
 }
 
 /* Declarations so far, as a style rule. */
@@ -556,13 +561,16 @@ static void style_rule(sp *p, const tc_css_value *prelude, uint32_t nprelude, co
                        uint32_t nparent, const tc_css_value *block, const tc_cond *cond, int32_t layer, int depth)
 {
     tc_selector_list *sel = tc_arena_alloc(&p->sheet->arena, sizeof *sel);
+    int err;
     if (!sel) {
         p->nomem = 1;
         return;
     }
-    if (parent && !nest_selector(p, prelude, nprelude, parent, nparent, (tc_css_value **)&prelude, &nprelude)) {
-        p->nomem = 1;
-        return;
+    if (parent && (err = nest_selector(p, prelude, nprelude, parent, nparent, (tc_css_value **)&prelude,
+                                       &nprelude)) != TC_OK) {
+        if (err == TC_ERR_NOMEM)
+            p->nomem = 1;
+        return; /* invalid: dropped like any rule with an invalid selector */
     }
     if (tc_selectors_parse(&p->sheet->arena, prelude, nprelude, 0, sel) != TC_OK)
         return; /* an invalid selector drops the rule, nested rules and all */

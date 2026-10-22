@@ -6,7 +6,8 @@
 # Produces, in OUT_DIR:
 #   tachyon-VERSION-win95-setup.exe  the installer (needs NSIS's makensis)
 #   tachyon-VERSION-win95.zip   everything, for copying into a VM or machine
-#   tachyon-VERSION-win95.img   a 1.44 MB floppy image: the browser (needs mtools)
+#   tachyon-VERSION-win95.img   a 1.44 MB floppy image with SETUP.EXE, the installer
+#                               (needs mtools; TACHYON.EXE alone no longer fits)
 #   tachyon-VERSION-win95.iso   a CD-ROM image with everything and SETUP.EXE (needs genisoimage)
 #   tachyon-VERSION-win95-symbols.txt  TACHYON.EXE's function addresses, for reading
 #                               crash reports with tools/symbolize.py
@@ -50,30 +51,37 @@ REQUIREMENTS
   and time: secure websites can't be checked with a wrong clock.
 
 INSTALLING
-  Run the setup program (SETUP.EXE on the CD, or $name-setup.exe).
+  Run the setup program (SETUP.EXE on the CD and the floppy, or
+  $name-setup.exe).
   It installs Tachyon in C:\Program Files\Tachyon with Start menu and
   desktop shortcuts. To remove it, use Add/Remove Programs in the Control
   Panel. Or don't install it at all: TACHYON.EXE needs no other files, so
   you can copy it anywhere and double-click it.
 
 RUNNING
-  Type an address such as example.com and press Enter.
+  Type an address such as en.wikipedia.org/wiki/Windows_95 and press
+  Enter. Click links to follow them; Back and Forward go through the
+  pages you've seen.
 
 WHAT WORKS IN THIS BUILD
   Tachyon fetches pages over HTTP and HTTPS (TLS 1.2 and 1.3, checked
   against Mozilla's trusted certificate authorities), parses their HTML
-  the way today's browsers do, and shows the result as a document tree.
-  Click a [+] (or use the arrow keys) to open an element; Ctrl+U shows the
-  page's source instead. It can't draw web pages yet: that arrives in
-  Sprint 3.
+  the way today's browsers do, loads their style sheets, and draws them
+  with its own layout engine in the TrueType fonts Windows 95 already has.
+  View > Document Tree and View > Page Source (Ctrl+U) show what's
+  underneath. Not yet: pictures (they show as frames or their
+  descriptions), tables and side-by-side layouts (laid out one under
+  another), scripts, forms and cookies. Those arrive in later sprints.
 
   Options: TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE.PEM]
+           [--fonts FOLDER]   (more TrueType fonts to use)
 
 FETCH.EXE (on the CD and in the zip)
   Downloads a page from an MS-DOS Prompt, for testing:
     FETCH -i https://example.com
   -i shows the response headers; -q hides the page; --dom prints the
-  page's document tree instead, with a summary of the parse.
+  page's document tree instead, with a summary of the parse; --render
+  loads its style sheets and lays it out, and says how long that took.
 
 IF TACHYON CRASHES
   Tachyon keeps a log, TACHYON.LOG, next to TACHYON.EXE, and writes a
@@ -115,12 +123,16 @@ else
   echo "package.sh: NSIS (makensis) not installed, skipping the installer" >&2
 fi
 
-if command -v mformat >/dev/null 2>&1; then
-  mformat -C -f 1440 -v TACHYON -i "$out/$name.img" ::
-  mcopy -i "$out/$name.img" "$out/TACHYON/TACHYON.EXE" "$out/TACHYON/EXPORTS.EXE" \
-        "$out/TACHYON/README.TXT" "$out/TACHYON/LICENSE.TXT" ::
-else
+# TACHYON.EXE is bigger than a floppy since Sprint 3; the installer is
+# compressed and fits.
+if ! command -v mformat >/dev/null 2>&1; then
   echo "package.sh: mtools not installed, skipping the floppy image" >&2
+elif [ ! -f "$out/$name-setup.exe" ]; then
+  echo "package.sh: no installer, so no floppy image (TACHYON.EXE doesn't fit)" >&2
+else
+  mformat -C -f 1440 -v TACHYON -i "$out/$name.img" ::
+  mcopy -i "$out/$name.img" "$out/$name-setup.exe" ::SETUP.EXE
+  mcopy -i "$out/$name.img" "$out/TACHYON/EXPORTS.EXE" "$out/TACHYON/README.TXT" "$out/TACHYON/LICENSE.TXT" ::
 fi
 
 if command -v genisoimage >/dev/null 2>&1; then

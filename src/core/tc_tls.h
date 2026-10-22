@@ -35,6 +35,10 @@ typedef struct tc_tls tc_tls;
    or the socket's own errors. */
 int tc_tls_connect(tc_socket *sock, const char *host, uint32_t timeout_ms, const volatile int *cancel,
                    tc_tls **out, tc_tls_info *info);
+/* Use a new timeout and cancel flag for a connection kept open and reused
+   for another request (HTTP keep-alive). */
+void tc_tls_set_io(tc_tls *t, uint32_t timeout_ms, const volatile int *cancel);
+
 /* Send all of data. */
 int tc_tls_send(tc_tls *t, const void *data, size_t len);
 /* Bytes received, 0 at the end of the stream, or a negative tc_err. */

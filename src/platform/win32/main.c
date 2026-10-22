@@ -1,9 +1,12 @@
 /* Tachyon for Windows 95: program entry point.
  *
- *   TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE] [--smoke-test] [--crash-test]
+ *   TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE] [--fonts DIR] [--smoke-test]
+ *               [--crash-test]
  *
  * --proxy sends every request through an HTTP proxy. --cacert trusts the
  * certificate authorities in a PEM file too (a company proxy's, say).
+ * --fonts adds the TrueType fonts in a directory (for Wine, which lacks
+ * Windows 95's).
  * --smoke-test opens the window, waits for the first paint and exits with 0
  * (CI runs this under Wine). --crash-test crashes on purpose once the window
  * is open, to test the crash report in TACHYON.LOG. */
@@ -15,13 +18,17 @@
 #include "resource.h"
 #include "shell.h"
 #include "tc_entropy.h"
+#include "tc_fetch.h"
+#include "tc_font.h"
 #include "tc_log.h"
+#include "tc_style.h"
 #include "tc_tls.h"
 #include "tw_log.h"
 #include "view.h"
 
 static char proxy_host[256];
 static const char *cacert_file;
+static const char *fonts_dir;
 static int crash_test;
 
 static void parse_command_line(char *cmdline, tw_shell_options *opts)
@@ -42,6 +49,8 @@ static void parse_command_line(char *cmdline, tw_shell_options *opts)
             }
         } else if (strcmp(token, "--cacert") == 0) {
             cacert_file = strtok(NULL, " \t");
+        } else if (strcmp(token, "--fonts") == 0) {
+            fonts_dir = strtok(NULL, " \t");
         } else if (!opts->start_url) {
             opts->start_url = token;
         }
@@ -84,6 +93,19 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
         MessageBoxA(NULL, "Tachyon found no certificates in the --cacert file.", "Tachyon", MB_OK | MB_ICONWARNING);
     tc_log("secure connections ready: %d trusted roots; randomness %d of 256 bits (%s)", tc_tls_trusted_count(),
            tc_entropy_strength(), tc_entropy_sources());
+    /* Styles and fonts are ready before any page loads on another thread. */
+    tc_style_init();
+    opts.fonts = tc_font_set_new();
+    opts.pool = tc_conn_pool_new();
+    opts.cache = tc_cache_new(2u << 20);
+    if (!opts.fonts || !opts.pool || !opts.cache) {
+        MessageBoxA(NULL, "Tachyon doesn't have enough memory to start.", "Tachyon", MB_OK | MB_ICONSTOP);
+        return 1;
+    }
+    if (fonts_dir)
+        tc_font_set_add_dir(opts.fonts, fonts_dir);
+    tc_font_set_add_system(opts.fonts);
+    tc_log("%u font faces", (unsigned)tc_font_set_count(opts.fonts));
     if (!tw_view_register(instance) || !tw_shell_register(instance)) {
         MessageBoxA(NULL, "Tachyon could not register its window classes.", "Tachyon", MB_OK | MB_ICONSTOP);
         return 1;

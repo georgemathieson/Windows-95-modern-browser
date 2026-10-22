@@ -235,6 +235,12 @@ void tc_styled_free(tc_styled *s);
    (outside the document, or inside display: none). */
 const tc_element_styles *tc_styled_element(const tc_styled *s, const tc_element *el);
 
+/* The style of an anonymous box inside one with style parent: inherited
+   values from parent, initial values for the rest, and display. */
+void tc_style_anonymous(tc_style *out, const tc_style *parent, int display);
+/* Every property's initial value. */
+void tc_style_initial(tc_style *out);
+
 /* Statistics: elements styled, selectors in the cascade, selector tests
    and matches, distinct computed styles, bytes used. */
 typedef struct tc_style_stats {

@@ -10,12 +10,21 @@
 #include "tc_utf8.h"
 #include "tc_version.h"
 
-enum page_kind { PAGE_HOME, PAGE_BLANK, PAGE_MESSAGE, PAGE_SOURCE, PAGE_TREE };
+/* What the view shows. */
+enum display { D_BLANK, D_PAGE, D_TREE, D_SOURCE };
 
 /* Most of a big document is still worth seeing; all of it costs too much
    memory on a 1990s PC. */
 #define SOURCE_MAX_CHARS (2u * 1024 * 1024)
 #define TAB_WIDTH 8
+
+#define RELAYOUT_TIMER 1
+#define RELAYOUT_MS    150   /* lay out again this long after the last resize */
+#define HOVER_TIMER    2
+#define HOVER_MS       100   /* Windows 95 has no TrackMouseEvent: poll while over a link */
+#define LINE_SCROLL    40    /* pixels per arrow key */
+#define WHEEL_SCROLL   48    /* pixels per wheel notch */
+#define SCROLL_MAX     30000 /* Windows 95's scroll bars count to 32767 */
 
 typedef struct vline {
     uint32_t start, len; /* in source.text */
@@ -32,25 +41,37 @@ typedef struct source_text {
 
 typedef struct view {
     HWND hwnd;
-    enum page_kind page;
+    tc_font_set *fonts;
+    tw_view_mode mode;
     char url[2048];
-    char heading[256];
-    char *text, *detail;
     char warning[512];
+
+    /* An HTML page, or a non-HTML document shown as source. */
+    int has_page;
+    tc_page page;
+    int is_text;         /* a non-HTML document: source only */
+    char *head;          /* the response head, for the source */
+    size_t head_len;
+    char *text_body;     /* a non-HTML document's body */
+    size_t text_len;
+
+    /* The rendered page: scroll position, size, links. */
+    int sx, sy;
+    float doc_w, doc_h;
+    int wheel_rest;
+    int dirty;           /* the back buffer must be painted again */
+    const tc_element *hover, *pressed;
+    HCURSOR hand, arrow;
+
+    /* Source and tree. */
     source_text source;
     int top_line;        /* first visible source line or tree row */
     int line_height, char_width;
-
-    /* A parsed document, shown as PAGE_TREE or (its source) PAGE_SOURCE. */
-    int has_document;
-    tc_html_page document;
-    char *head;          /* the response head, for the source */
-    size_t head_len;
     tc_outline outline;
+    int has_outline;
     tc_outline_text row_text;
     int selected;        /* selected tree row, or -1 */
     char info[512];      /* the line above the tree */
-    int show_source;     /* documents: show the source, not the tree */
 
     /* Back buffer: a 32 bpp top-down DIB section selected into `dc`. */
     HDC dc;
@@ -59,16 +80,12 @@ typedef struct view {
     uint32_t *bits;
     int width, height;
 
-    HFONT font_logo, font_tagline, font_heading, font_body, font_small, font_mono;
+    HFONT font_small, font_mono;
     int paint_count;
 } view;
 
 #define TREE_INDENT    2    /* characters per level */
 #define TREE_BOX       12   /* pixels for the [+] box and its gap */
-
-#define BANNER_TOP     TC_RGB(0, 0, 192)
-#define BANNER_BOTTOM  TC_RGB(0, 0, 40)
-#define PAGE_MARGIN    24
 #define SOURCE_MARGIN  6
 
 /* IntelliPoint's wheel message on Windows 95, which has no WM_MOUSEWHEEL. */
@@ -85,17 +102,13 @@ static HFONT make_font(const char *face, int px, int weight, int italic, int cha
                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, (DWORD)pitch, face);
 }
 
-static char *copy_string(const char *s)
+static enum display display_of(const view *v)
 {
-    char *p;
-    size_t n;
-    if (!s)
-        return NULL;
-    n = strlen(s) + 1;
-    p = malloc(n);
-    if (p)
-        memcpy(p, s, n);
-    return p;
+    if (v->is_text)
+        return D_SOURCE;
+    if (!v->has_page)
+        return D_BLANK;
+    return v->mode == TW_MODE_TREE ? D_TREE : v->mode == TW_MODE_SOURCE ? D_SOURCE : D_PAGE;
 }
 
 /* ---- Back buffer ---- */
@@ -122,6 +135,7 @@ static int ensure_backbuffer(view *v, int width, int height)
     if (v->dc && v->width == width && v->height == height)
         return 1;
     free_backbuffer(v);
+    v->dirty = 1;
     if (width <= 0 || height <= 0)
         return 0;
 
@@ -153,7 +167,13 @@ static int ensure_backbuffer(view *v, int width, int height)
     return 1;
 }
 
-/* ---- Source text: decoding, wrapping, scrolling ---- */
+static void redraw(view *v)
+{
+    v->dirty = 1;
+    InvalidateRect(v->hwnd, NULL, FALSE);
+}
+
+/* ---- Source text: decoding, wrapping ---- */
 
 static void source_free(source_text *s)
 {
@@ -247,10 +267,12 @@ static void source_wrap(source_text *s, int cols)
     }
 }
 
+/* ---- Lines (source and tree) ---- */
+
 /* The height of the information bar above the tree. */
 static int info_height(const view *v)
 {
-    return v->page == PAGE_TREE ? v->line_height + 8 : 0;
+    return display_of(v) == D_TREE ? v->line_height + 8 : 0;
 }
 
 static int visible_lines(view *v)
@@ -265,36 +287,61 @@ static int visible_lines(view *v)
 /* Lines of source or rows of tree. */
 static int total_lines(const view *v)
 {
-    if (v->page == PAGE_SOURCE)
-        return (int)v->source.nlines;
-    if (v->page == PAGE_TREE)
-        return (int)v->outline.count;
-    return 0;
+    switch (display_of(v)) {
+    case D_SOURCE: return (int)v->source.nlines;
+    case D_TREE: return (int)v->outline.count;
+    default: return 0;
+    }
 }
 
-static void update_scrollbar(view *v)
+/* Scroll bar positions for the page, in units small enough for Windows 95's
+   16-bit scroll bars. */
+static int scroll_unit(float size)
+{
+    return size > SCROLL_MAX ? (int)(size / SCROLL_MAX) + 1 : 1;
+}
+
+static void set_bar(HWND hwnd, int bar, int max, int page, int pos)
 {
     SCROLLINFO si;
     memset(&si, 0, sizeof si);
     si.cbSize = sizeof si;
-    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
-    if (total_lines(v)) {
-        si.nMax = total_lines(v) - 1;
-        si.nPage = (UINT)visible_lines(v);
-        si.nPos = v->top_line;
-    }
-    SetScrollInfo(v->hwnd, SB_VERT, &si, TRUE);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
+    si.nMin = 0;
+    si.nMax = max;
+    si.nPage = (UINT)TC_MAX(page, 0);
+    si.nPos = pos;
+    SetScrollInfo(hwnd, bar, &si, TRUE);
 }
 
-static void scroll_to(view *v, int line)
+static void update_scrollbars(view *v)
+{
+    RECT client;
+    GetClientRect(v->hwnd, &client);
+    if (display_of(v) == D_PAGE) {
+        int uy = scroll_unit(v->doc_h), ux = scroll_unit(v->doc_w);
+        set_bar(v->hwnd, SB_VERT, (int)(v->doc_h / uy), client.bottom / uy, v->sy / uy);
+        if (v->doc_w > client.right + 1) {
+            ShowScrollBar(v->hwnd, SB_HORZ, TRUE);
+            set_bar(v->hwnd, SB_HORZ, (int)(v->doc_w / ux), client.right / ux, v->sx / ux);
+        } else {
+            ShowScrollBar(v->hwnd, SB_HORZ, FALSE);
+        }
+        return;
+    }
+    ShowScrollBar(v->hwnd, SB_HORZ, FALSE);
+    set_bar(v->hwnd, SB_VERT, total_lines(v) ? total_lines(v) - 1 : 0, visible_lines(v), v->top_line);
+}
+
+static void scroll_lines_to(view *v, int line)
 {
     int max = total_lines(v) - visible_lines(v);
     line = TC_CLAMP(line, 0, TC_MAX(max, 0));
     if (line != v->top_line) {
         tc_trace("scroll %d -> %d", v->top_line, line);
         v->top_line = line;
-        update_scrollbar(v);
-        InvalidateRect(v->hwnd, NULL, FALSE);
+        update_scrollbars(v);
+        redraw(v);
     }
 }
 
@@ -306,7 +353,7 @@ static void layout_source(view *v)
     int cols;
     size_t i;
 
-    if (v->page != PAGE_SOURCE || !v->char_width)
+    if (display_of(v) != D_SOURCE || !v->char_width)
         return;
     GetClientRect(v->hwnd, &client);
     cols = (client.right - 2 * SOURCE_MARGIN) / v->char_width;
@@ -317,96 +364,91 @@ static void layout_source(view *v)
     v->top_line = 0;
     for (i = 0; i < v->source.nlines && v->source.lines[i].start <= top_char; i++)
         v->top_line = (int)i;
-    update_scrollbar(v);
+}
+
+/* ---- The page ---- */
+
+static void page_bounds(view *v, int *max_x, int *max_y)
+{
+    RECT client;
+    GetClientRect(v->hwnd, &client);
+    *max_x = TC_MAX(0, (int)(v->doc_w + 0.5f) - client.right);
+    *max_y = TC_MAX(0, (int)(v->doc_h + 0.5f) - client.bottom);
+}
+
+static void paint_page_area(view *v, tc_rect clip)
+{
+    tc_surface s;
+    tc_surface_wrap(&s, v->bits, v->width, v->height, v->width);
+    tc_paint(v->page.layout, &s, clip, (float)v->sx, (float)v->sy);
+}
+
+/* Scroll the page: what's drawn moves, and only the strip that comes into
+   view is painted. */
+static void scroll_page_to(view *v, int x, int y)
+{
+    int max_x, max_y, dy;
+    page_bounds(v, &max_x, &max_y);
+    x = TC_CLAMP(x, 0, max_x);
+    y = TC_CLAMP(y, 0, max_y);
+    if (x == v->sx && y == v->sy)
+        return;
+    dy = y - v->sy;
+    tc_trace("scroll page %d,%d -> %d,%d", v->sx, v->sy, x, y);
+    if (x == v->sx && !v->dirty && v->dc && dy > -v->height && dy < v->height) {
+        int rows = v->height - (dy > 0 ? dy : -dy);
+        GdiFlush();
+        if (dy > 0)
+            memmove(v->bits, v->bits + (size_t)dy * (size_t)v->width, (size_t)rows * (size_t)v->width * 4);
+        else
+            memmove(v->bits - (size_t)dy * (size_t)v->width, v->bits, (size_t)rows * (size_t)v->width * 4);
+        v->sy = y;
+        paint_page_area(v, dy > 0 ? tc_rect_make(0, rows, v->width, dy) : tc_rect_make(0, 0, v->width, -dy));
+        ScrollWindowEx(v->hwnd, 0, -dy, NULL, NULL, NULL, NULL, SW_INVALIDATE);
+    } else {
+        v->sx = x;
+        v->sy = y;
+        redraw(v);
+    }
+    update_scrollbars(v);
+}
+
+static void scroll_by(view *v, int dx, int dy)
+{
+    if (display_of(v) == D_PAGE)
+        scroll_page_to(v, v->sx + dx, v->sy + dy);
+    else if (v->line_height)
+        scroll_lines_to(v, v->top_line + dy / v->line_height + (dy > 0 && dy < v->line_height) -
+                               (dy < 0 && -dy < v->line_height));
+}
+
+/* Lay the page out again for the view's size (after a resize). */
+static void relayout(view *v)
+{
+    RECT client;
+    float fraction;
+    if (!v->has_page)
+        return;
+    GetClientRect(v->hwnd, &client);
+    if (client.right <= 0 || client.bottom <= 0)
+        return;
+    if (v->page.layout && v->page.width == (float)client.right)
+        return;
+    fraction = v->doc_h > 0 ? v->sy / v->doc_h : 0;
+    SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_WAIT));
+    tc_log("layout again at %ldx%ld", (long)client.right, (long)client.bottom);
+    if (tc_page_layout(&v->page, v->fonts, (float)client.right, (float)client.bottom) != TC_OK)
+        tc_log("out of memory laying out");
+    if (v->page.layout)
+        tc_layout_size(v->page.layout, &v->doc_w, &v->doc_h);
+    v->sy = (int)(fraction * v->doc_h);
+    v->pressed = NULL; /* the hover timer checks what is under the mouse now */
+    scroll_page_to(v, v->sx, v->sy);
+    update_scrollbars(v);
+    redraw(v);
 }
 
 /* ---- Drawing ---- */
-
-/* Draw wrapped text in `r` and move r->top below it. */
-static void text_block(view *v, HFONT font, COLORREF color, RECT *r, const char *text)
-{
-    RECT measure = *r;
-    SelectObject(v->dc, font);
-    SetTextColor(v->dc, color);
-    DrawTextA(v->dc, text, -1, &measure, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
-    DrawTextA(v->dc, text, -1, r, DT_WORDBREAK | DT_NOPREFIX);
-    r->top += measure.bottom - measure.top;
-}
-
-static void text_at(view *v, HFONT font, COLORREF color, int x, int y, const char *text)
-{
-    SelectObject(v->dc, font);
-    SetTextColor(v->dc, color);
-    TextOutA(v->dc, x, y, text, (int)strlen(text));
-}
-
-static void text_shadowed(view *v, HFONT font, int x, int y, const char *text)
-{
-    text_at(v, font, RGB(0, 0, 0), x + 3, y + 3, text);
-    text_at(v, font, RGB(255, 255, 255), x, y, text);
-}
-
-static void paint_home(view *v, tc_surface *s)
-{
-    char footer[256];
-    RECT r;
-    int banner = 120;
-
-    tc_surface_gradient_v(s, tc_rect_make(0, 0, s->width, banner), BANNER_TOP, BANNER_BOTTOM);
-    text_shadowed(v, v->font_logo, PAGE_MARGIN, 10, TC_NAME);
-    text_at(v, v->font_tagline, RGB(255, 255, 160), PAGE_MARGIN + 4, 82, "The modern web, sent back to 1995.");
-
-    SetRect(&r, PAGE_MARGIN, banner + 20, v->width - PAGE_MARGIN, v->height);
-    if (v->warning[0]) {
-        RECT box = r, measure = r;
-        SelectObject(v->dc, v->font_body);
-        DrawTextA(v->dc, v->warning, -1, &measure, DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
-        box.bottom = box.top + (measure.bottom - measure.top) + 16;
-        GdiFlush();
-        tc_surface_fill(s, tc_rect_make(box.left - 8, box.top, box.right - box.left + 16, box.bottom - box.top),
-                        TC_RGB(255, 255, 192));
-        r.top += 8;
-        text_block(v, v->font_body, RGB(128, 0, 0), &r, v->warning);
-        r.top += 20;
-    }
-    text_block(v, v->font_heading, RGB(0, 0, 128), &r, "Sprint 2: HTML5 parser and DOM");
-    r.top += 6;
-    text_block(v, v->font_body, RGB(0, 0, 0), &r,
-               "Tachyon now reads pages the way today's browsers do: it fetches them over HTTPS and parses "
-               "their HTML into a document tree, the DOM, which it shows when a page loads. Click a [+] to "
-               "open an element, or press Ctrl+U for the page's source. Try example.com or en.wikipedia.org.");
-    r.top += 14;
-    text_block(v, v->font_heading, RGB(0, 0, 128), &r, "Coming next");
-    r.top += 6;
-    text_block(v, v->font_body, RGB(0, 0, 0), &r,
-               "\x95  Sprint 3: First Light, with CSS, layout and text: Wikipedia on Windows 95\r\n"
-               "\x95  Sprint 4: images and fonts\r\n"
-               "\x95  Sprint 5: JavaScript");
-    r.top += 18;
-    snprintf(footer, sizeof footer, "%s %s  \x95  GNU GPL v3  \x95  %s", TC_NAME, TC_VERSION, TC_HOMEPAGE);
-    text_block(v, v->font_small, RGB(128, 128, 128), &r, footer);
-}
-
-static void paint_message(view *v, tc_surface *s)
-{
-    RECT r;
-    int banner = 56;
-
-    tc_surface_gradient_v(s, tc_rect_make(0, 0, s->width, banner), BANNER_TOP, BANNER_BOTTOM);
-    text_shadowed(v, v->font_heading, PAGE_MARGIN, 18, v->heading);
-
-    SetRect(&r, PAGE_MARGIN, banner + 20, v->width - PAGE_MARGIN, v->height);
-    if (v->url[0]) {
-        text_block(v, v->font_heading, RGB(0, 0, 128), &r, v->url);
-        r.top += 8;
-    }
-    if (v->text) {
-        text_block(v, v->font_body, RGB(0, 0, 0), &r, v->text);
-        r.top += 12;
-    }
-    if (v->detail)
-        text_block(v, v->font_small, RGB(96, 96, 96), &r, v->detail);
-}
 
 /* A source line for the log: ASCII, with \uXXXX for anything else. */
 static const char *wide_ascii(char *out, size_t cap, const WCHAR *s, size_t len)
@@ -541,24 +583,30 @@ static void render(view *v)
         return;
     GdiFlush(); /* finish GDI drawing before touching the bits directly */
     tc_surface_wrap(&s, v->bits, v->width, v->height, v->width);
-    tc_surface_fill(&s, tc_rect_make(0, 0, v->width, v->height), TC_RGB(255, 255, 255));
-    SetBkMode(v->dc, TRANSPARENT);
-    switch (v->page) {
-    case PAGE_HOME:
-        paint_home(v, &s);
+    switch (display_of(v)) {
+    case D_PAGE:
+        if (v->page.layout) {
+            tc_trace("paint page at %d,%d, %dx%d", v->sx, v->sy, v->width, v->height);
+            paint_page_area(v, tc_rect_make(0, 0, v->width, v->height));
+            break;
+        }
+        /* fall through */
+    case D_BLANK:
+        tc_surface_fill(&s, tc_rect_make(0, 0, v->width, v->height), TC_RGB(255, 255, 255));
         break;
-    case PAGE_MESSAGE:
-        paint_message(v, &s);
-        break;
-    case PAGE_SOURCE:
+    case D_SOURCE:
+        tc_surface_fill(&s, tc_rect_make(0, 0, v->width, v->height), TC_RGB(255, 255, 255));
+        SetBkMode(v->dc, TRANSPARENT);
         paint_source(v);
         break;
-    case PAGE_TREE:
+    case D_TREE:
+        tc_surface_fill(&s, tc_rect_make(0, 0, v->width, v->height), TC_RGB(255, 255, 255));
+        SetBkMode(v->dc, TRANSPARENT);
         paint_tree(v, &s);
         break;
-    case PAGE_BLANK:
-        break;
     }
+    GdiFlush();
+    v->dirty = 0;
 }
 
 static void on_paint(view *v)
@@ -569,8 +617,10 @@ static void on_paint(view *v)
 
     GetClientRect(v->hwnd, &client);
     if (ensure_backbuffer(v, client.right, client.bottom)) {
-        render(v);
-        BitBlt(dc, 0, 0, v->width, v->height, v->dc, 0, 0, SRCCOPY);
+        if (v->dirty)
+            render(v);
+        BitBlt(dc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right - ps.rcPaint.left,
+               ps.rcPaint.bottom - ps.rcPaint.top, v->dc, ps.rcPaint.left, ps.rcPaint.top, SRCCOPY);
     } else {
         FillRect(dc, &client, (HBRUSH)GetStockObject(WHITE_BRUSH));
     }
@@ -578,28 +628,53 @@ static void on_paint(view *v)
     v->paint_count++;
 }
 
-/* ---- Window procedure ---- */
+/* ---- Input ---- */
 
-static void on_vscroll(view *v, int code)
+static int scroll_pos(view *v, int bar, int code, int pos, int line, int page, int max)
 {
     SCROLLINFO si;
-    int page = visible_lines(v);
     switch (code) {
-    case SB_LINEUP: scroll_to(v, v->top_line - 1); break;
-    case SB_LINEDOWN: scroll_to(v, v->top_line + 1); break;
-    case SB_PAGEUP: scroll_to(v, v->top_line - page); break;
-    case SB_PAGEDOWN: scroll_to(v, v->top_line + page); break;
-    case SB_TOP: scroll_to(v, 0); break;
-    case SB_BOTTOM: scroll_to(v, total_lines(v)); break;
+    case SB_LINEUP: return pos - line;
+    case SB_LINEDOWN: return pos + line;
+    case SB_PAGEUP: return pos - page;
+    case SB_PAGEDOWN: return pos + page;
+    case SB_TOP: return 0;
+    case SB_BOTTOM: return max;
     case SB_THUMBTRACK:
     case SB_THUMBPOSITION:
         memset(&si, 0, sizeof si);
         si.cbSize = sizeof si;
         si.fMask = SIF_TRACKPOS;
-        GetScrollInfo(v->hwnd, SB_VERT, &si);
-        scroll_to(v, si.nTrackPos);
-        break;
+        GetScrollInfo(v->hwnd, bar, &si);
+        return si.nTrackPos;
+    default: return pos;
     }
+}
+
+static void on_scroll(view *v, int bar, int code)
+{
+    RECT client;
+    GetClientRect(v->hwnd, &client);
+    if (display_of(v) == D_PAGE) {
+        int max_x, max_y;
+        page_bounds(v, &max_x, &max_y);
+        if (bar == SB_VERT) {
+            int unit = scroll_unit(v->doc_h);
+            int y = code == SB_THUMBTRACK || code == SB_THUMBPOSITION
+                        ? scroll_pos(v, bar, code, 0, 0, 0, 0) * unit
+                        : scroll_pos(v, bar, code, v->sy, LINE_SCROLL, client.bottom - LINE_SCROLL, max_y);
+            scroll_page_to(v, v->sx, y);
+        } else {
+            int unit = scroll_unit(v->doc_w);
+            int x = code == SB_THUMBTRACK || code == SB_THUMBPOSITION
+                        ? scroll_pos(v, bar, code, 0, 0, 0, 0) * unit
+                        : scroll_pos(v, bar, code, v->sx, LINE_SCROLL, client.right - LINE_SCROLL, max_x);
+            scroll_page_to(v, x, v->sy);
+        }
+        return;
+    }
+    if (bar == SB_VERT)
+        scroll_lines_to(v, scroll_pos(v, bar, code, v->top_line, 1, visible_lines(v), total_lines(v)));
 }
 
 /* Select a tree row and scroll it into view. */
@@ -612,10 +687,10 @@ static void select_row(view *v, int row)
     row = TC_CLAMP(row, 0, (int)v->outline.count - 1);
     v->selected = row;
     if (row < v->top_line)
-        scroll_to(v, row);
+        scroll_lines_to(v, row);
     else if (row >= v->top_line + page)
-        scroll_to(v, row - page + 1);
-    InvalidateRect(v->hwnd, NULL, FALSE);
+        scroll_lines_to(v, row - page + 1);
+    redraw(v);
 }
 
 /* Expand or collapse a row, keeping the selection on the same node. */
@@ -631,9 +706,9 @@ static void set_expanded(view *v, int row, int expanded)
     tc_trace("%s row %d", expanded ? "open" : "close", row);
     tc_outline_set_expanded(&v->outline, (size_t)row, expanded);
     v->selected = selected ? (int)tc_outline_find(&v->outline, selected) : -1;
-    scroll_to(v, v->top_line); /* clamps to the new length */
-    update_scrollbar(v);
-    InvalidateRect(v->hwnd, NULL, FALSE);
+    scroll_lines_to(v, v->top_line); /* clamps to the new length */
+    update_scrollbars(v);
+    redraw(v);
 }
 
 static int on_tree_key(view *v, WPARAM key)
@@ -664,7 +739,7 @@ static int on_tree_key(view *v, WPARAM key)
         if (row)
             set_expanded(v, sel, !row->expanded);
         return 1;
-    case VK_SPACE: scroll_to(v, v->top_line + page); return 1;
+    case VK_SPACE: scroll_lines_to(v, v->top_line + page); return 1;
     }
     return 0;
 }
@@ -686,19 +761,93 @@ static void on_tree_click(view *v, int x, int y, int double_click)
 
 static int on_key(view *v, WPARAM key)
 {
-    int page = visible_lines(v);
-    if (v->page == PAGE_TREE)
+    RECT client;
+    int page, shift = GetKeyState(VK_SHIFT) < 0;
+    enum display d = display_of(v);
+
+    if (d == D_TREE)
         return on_tree_key(v, key);
+    GetClientRect(v->hwnd, &client);
+    page = d == D_PAGE ? TC_MAX(client.bottom - LINE_SCROLL, LINE_SCROLL) : visible_lines(v) * v->line_height;
     switch (key) {
-    case VK_UP: scroll_to(v, v->top_line - 1); return 1;
-    case VK_DOWN: scroll_to(v, v->top_line + 1); return 1;
-    case VK_PRIOR: scroll_to(v, v->top_line - page); return 1;
-    case VK_NEXT:
-    case VK_SPACE: scroll_to(v, v->top_line + page); return 1;
-    case VK_HOME: scroll_to(v, 0); return 1;
-    case VK_END: scroll_to(v, total_lines(v)); return 1;
+    case VK_UP: scroll_by(v, 0, -LINE_SCROLL); return 1;
+    case VK_DOWN: scroll_by(v, 0, LINE_SCROLL); return 1;
+    case VK_LEFT: scroll_by(v, -LINE_SCROLL, 0); return 1;
+    case VK_RIGHT: scroll_by(v, LINE_SCROLL, 0); return 1;
+    case VK_PRIOR: scroll_by(v, 0, -page); return 1;
+    case VK_NEXT: scroll_by(v, 0, page); return 1;
+    case VK_SPACE: scroll_by(v, 0, shift ? -page : page); return 1;
+    case VK_HOME:
+        if (d == D_PAGE)
+            scroll_page_to(v, 0, 0);
+        else
+            scroll_lines_to(v, 0);
+        return 1;
+    case VK_END:
+        if (d == D_PAGE)
+            scroll_page_to(v, v->sx, (int)v->doc_h);
+        else
+            scroll_lines_to(v, total_lines(v));
+        return 1;
     }
     return 0;
+}
+
+/* The link under the mouse, and telling the frame about it. */
+static const tc_element *link_at(view *v, int x, int y, tc_url *url)
+{
+    if (display_of(v) != D_PAGE || !v->page.layout)
+        return NULL;
+    return tc_page_link_at(&v->page, (float)(x + v->sx), (float)(y + v->sy), url);
+}
+
+static void set_hover(view *v, int x, int y)
+{
+    tc_url url;
+    const tc_element *link = x >= 0 && y >= 0 ? link_at(v, x, y, &url) : NULL;
+    if (link == v->hover) {
+        if (link)
+            tc_url_free(&url);
+        return;
+    }
+    v->hover = link;
+    if (link)
+        SetTimer(v->hwnd, HOVER_TIMER, HOVER_MS, NULL);
+    else
+        KillTimer(v->hwnd, HOVER_TIMER);
+    SendMessageA(GetParent(v->hwnd), WM_TW_HOVER, 0, (LPARAM)(link ? url.href : NULL));
+    if (link)
+        tc_url_free(&url);
+}
+
+/* While over a link: has the mouse left the view, or has the page moved
+   under it? */
+static void check_hover(view *v)
+{
+    POINT pt;
+    if (!v->hover) { /* a new page came in under it */
+        KillTimer(v->hwnd, HOVER_TIMER);
+        return;
+    }
+    GetCursorPos(&pt);
+    if (WindowFromPoint(pt) != v->hwnd) {
+        set_hover(v, -1, -1);
+        return;
+    }
+    ScreenToClient(v->hwnd, &pt);
+    set_hover(v, pt.x, pt.y);
+}
+
+static void on_wheel(view *v, int delta)
+{
+    /* Trackpads send small steps; keep the remainder for the next. */
+    int total = delta * WHEEL_SCROLL + v->wheel_rest, px = total / 120;
+    v->wheel_rest = total - px * 120;
+    tc_trace("wheel %d: %d px", delta, -px);
+    if (display_of(v) == D_PAGE)
+        scroll_page_to(v, v->sx, v->sy - px);
+    else if (v->line_height && px)
+        scroll_lines_to(v, v->top_line - (px > 0 ? TC_MAX(1, px / v->line_height) : TC_MIN(-1, px / v->line_height)));
 }
 
 static void measure_mono_font(view *v)
@@ -713,24 +862,48 @@ static void measure_mono_font(view *v)
     v->char_width = tm.tmAveCharWidth > 0 ? tm.tmAveCharWidth : 8;
 }
 
+static void clear_document(view *v)
+{
+    if (v->has_outline)
+        tc_outline_free(&v->outline);
+    v->has_outline = 0;
+    if (v->has_page)
+        tc_page_free(&v->page);
+    v->has_page = 0;
+    v->is_text = 0;
+    free(v->head);
+    free(v->text_body);
+    v->head = v->text_body = NULL;
+    v->head_len = v->text_len = 0;
+    source_free(&v->source);
+    v->top_line = 0;
+    v->selected = -1;
+    v->sx = v->sy = 0;
+    v->doc_w = v->doc_h = 0;
+    if (v->hover)
+        set_hover(v, -1, -1);
+    v->pressed = NULL;
+    v->info[0] = '\0';
+}
+
 static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     view *v = get_view(hwnd);
 
     if (msg == WM_CREATE) {
+        const CREATESTRUCTA *cs = (const CREATESTRUCTA *)lp;
         v = calloc(1, sizeof *v);
         if (!v)
             return -1;
         v->hwnd = hwnd;
-        v->page = PAGE_BLANK;
+        v->fonts = cs->lpCreateParams;
         v->selected = -1;
+        v->dirty = 1;
         tc_outline_text_init(&v->row_text);
-        v->font_logo = make_font("Times New Roman", 64, FW_BOLD, 1, ANSI_CHARSET, VARIABLE_PITCH | FF_ROMAN);
-        v->font_tagline = make_font("Arial", 20, FW_NORMAL, 1, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS);
-        v->font_heading = make_font("Arial", 18, FW_BOLD, 0, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS);
-        v->font_body = make_font("Arial", 15, FW_NORMAL, 0, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS);
         v->font_small = make_font("Arial", 12, FW_NORMAL, 0, ANSI_CHARSET, VARIABLE_PITCH | FF_SWISS);
         v->font_mono = make_font("Courier New", 13, FW_NORMAL, 0, DEFAULT_CHARSET, FIXED_PITCH | FF_MODERN);
+        v->hand = LoadCursorA(cs->hInstance, "HAND");
+        v->arrow = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
         SetWindowLongA(hwnd, GWL_USERDATA, (LONG)v);
         measure_mono_font(v);
         return 0;
@@ -739,8 +912,7 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return DefWindowProcA(hwnd, msg, wp, lp);
 
     if (msg == WM_MOUSEWHEEL || (msh_mousewheel && msg == msh_mousewheel)) {
-        int delta = msg == WM_MOUSEWHEEL ? (short)HIWORD(wp) : (int)wp;
-        scroll_to(v, v->top_line - delta / 40); /* three lines per notch */
+        on_wheel(v, msg == WM_MOUSEWHEEL ? (short)HIWORD(wp) : (int)wp);
         return 0;
     }
     switch (msg) {
@@ -751,10 +923,26 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_SIZE:
         layout_source(v);
-        update_scrollbar(v);
+        if (v->has_page && display_of(v) == D_PAGE && v->page.width != (float)LOWORD(lp))
+            SetTimer(hwnd, RELAYOUT_TIMER, RELAYOUT_MS, NULL);
+        if (display_of(v) == D_PAGE)
+            scroll_page_to(v, v->sx, v->sy); /* clamp to the new size */
+        update_scrollbars(v);
+        v->dirty = 1;
+        return 0;
+    case WM_TIMER:
+        if (wp == RELAYOUT_TIMER) {
+            KillTimer(hwnd, RELAYOUT_TIMER);
+            relayout(v);
+        } else if (wp == HOVER_TIMER) {
+            check_hover(v);
+        }
         return 0;
     case WM_VSCROLL:
-        on_vscroll(v, LOWORD(wp));
+        on_scroll(v, SB_VERT, LOWORD(wp));
+        return 0;
+    case WM_HSCROLL:
+        on_scroll(v, SB_HORZ, LOWORD(wp));
         return 0;
     case WM_KEYDOWN:
         if (on_key(v, wp))
@@ -762,27 +950,46 @@ static LRESULT CALLBACK view_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_GETDLGCODE:
         return DLGC_WANTARROWS;
+    case WM_MOUSEMOVE:
+        set_hover(v, (short)LOWORD(lp), (short)HIWORD(lp));
+        return 0;
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) {
+            SetCursor(v->hover && v->hand ? v->hand : v->arrow);
+            return TRUE;
+        }
+        break;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
         SetFocus(hwnd);
-        if (v->page == PAGE_TREE)
+        if (display_of(v) == D_TREE)
             on_tree_click(v, (short)LOWORD(lp), (short)HIWORD(lp), msg == WM_LBUTTONDBLCLK);
+        else
+            v->pressed = link_at(v, (short)LOWORD(lp), (short)HIWORD(lp), NULL);
         return 0;
+    case WM_LBUTTONUP: {
+        tc_url url;
+        const tc_element *link = v->pressed ? link_at(v, (short)LOWORD(lp), (short)HIWORD(lp), &url) : NULL;
+        if (link && link == v->pressed) {
+            tc_log("follow %.120s", url.href);
+            v->pressed = NULL;
+            SendMessageA(GetParent(hwnd), WM_TW_FOLLOW, 0, (LPARAM)url.href);
+            tc_url_free(&url);
+            return 0;
+        }
+        if (link)
+            tc_url_free(&url);
+        v->pressed = NULL;
+        return 0;
+    }
     case WM_DESTROY:
+        KillTimer(hwnd, RELAYOUT_TIMER);
+        KillTimer(hwnd, HOVER_TIMER);
         free_backbuffer(v);
-        DeleteObject(v->font_logo);
-        DeleteObject(v->font_tagline);
-        DeleteObject(v->font_heading);
-        DeleteObject(v->font_body);
         DeleteObject(v->font_small);
         DeleteObject(v->font_mono);
-        source_free(&v->source);
-        free(v->text);
-        free(v->detail);
-        free(v->head);
-        tc_outline_free(&v->outline);
+        clear_document(v);
         tc_outline_text_free(&v->row_text);
-        tc_html_page_free(&v->document);
         free(v);
         SetWindowLongA(hwnd, GWL_USERDATA, 0);
         return 0;
@@ -795,75 +1002,36 @@ int tw_view_register(HINSTANCE instance)
     WNDCLASSA wc;
     msh_mousewheel = RegisterWindowMessageA("MSWHEEL_ROLLMSG");
     memset(&wc, 0, sizeof wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+    wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = view_proc;
     wc.hInstance = instance;
-    wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.hCursor = NULL; /* WM_SETCURSOR picks */
     wc.lpszClassName = TW_VIEW_CLASS;
     return RegisterClassA(&wc) != 0;
 }
 
-HWND tw_view_create(HWND parent, HINSTANCE instance, int id)
+HWND tw_view_create(HWND parent, HINSTANCE instance, int id, tc_font_set *fonts)
 {
     return CreateWindowExA(WS_EX_CLIENTEDGE, TW_VIEW_CLASS, "",
-                           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL,
-                           0, 0, 0, 0, parent, (HMENU)(INT_PTR)id, instance, NULL);
+                           WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL,
+                           0, 0, 0, 0, parent, (HMENU)(INT_PTR)id, instance, fonts);
+}
+
+void tw_view_page_size(HWND hwnd, int *w, int *h)
+{
+    RECT client;
+    GetClientRect(hwnd, &client);
+    *w = TC_MAX(client.right, 100);
+    *h = TC_MAX(client.bottom, 100);
 }
 
 /* ---- Showing pages ---- */
 
-static view *begin_page(HWND hwnd, enum page_kind page, const char *url)
+static void finish(view *v)
 {
-    view *v = get_view(hwnd);
-    if (!v)
-        return NULL;
-    v->page = page;
-    snprintf(v->url, sizeof v->url, "%s", url ? url : "");
-    free(v->text);
-    free(v->detail);
-    v->text = v->detail = NULL;
-    source_free(&v->source);
-    v->top_line = 0;
-    if (v->has_document) {
-        tc_outline_free(&v->outline);
-        tc_html_page_free(&v->document);
-        free(v->head);
-        v->head = NULL;
-        v->has_document = 0;
-    }
-    v->selected = -1;
-    return v;
-}
-
-static void end_page(view *v)
-{
-    update_scrollbar(v);
-    InvalidateRect(v->hwnd, NULL, FALSE);
-}
-
-void tw_view_show_home(HWND hwnd)
-{
-    view *v = begin_page(hwnd, PAGE_HOME, "about:tachyon");
-    if (v)
-        end_page(v);
-}
-
-void tw_view_show_blank(HWND hwnd)
-{
-    view *v = begin_page(hwnd, PAGE_BLANK, "about:blank");
-    if (v)
-        end_page(v);
-}
-
-void tw_view_show_message(HWND hwnd, const char *url, const char *heading, const char *text, const char *detail)
-{
-    view *v = begin_page(hwnd, PAGE_MESSAGE, url);
-    if (!v)
-        return;
-    snprintf(v->heading, sizeof v->heading, "%s", heading);
-    v->text = copy_string(text);
-    v->detail = copy_string(detail);
-    end_page(v);
+    layout_source(v);
+    update_scrollbars(v);
+    redraw(v);
 }
 
 /* Fill v->source with a response head and body. */
@@ -873,7 +1041,7 @@ static int fill_source(view *v, const char *head, size_t head_len, const char *b
     size_t column = 0;
 
     source_free(&v->source);
-    source_append(&v->source, head, head_len, &column);
+    source_append(&v->source, head ? head : "", head_len, &column);
     v->source.head_len = v->source.len;
     if (!source_append(&v->source, body, body_len, &column)) {
         /* Make room for the note by dropping the end of the text. */
@@ -885,22 +1053,7 @@ static int fill_source(view *v, const char *head, size_t head_len, const char *b
     if (!v->source.text)
         return TC_ERR_NOMEM;
     v->source.wrap_cols = 0;
-    layout_source(v);
-    return TC_OK;
-}
-
-int tw_view_show_source(HWND hwnd, const char *url, const char *head, size_t head_len, const char *body,
-                        size_t body_len)
-{
-    view *v = begin_page(hwnd, PAGE_SOURCE, url);
-
-    if (!v)
-        return TC_ERR_INVALID;
-    if (fill_source(v, head, head_len, body, body_len) != TC_OK) {
-        tw_view_show_message(hwnd, url, "Out of memory", "This page is too big to show.", NULL);
-        return TC_ERR_NOMEM;
-    }
-    end_page(v);
+    v->top_line = 0;
     return TC_OK;
 }
 
@@ -933,90 +1086,311 @@ static void with_commas(size_t n, char *out, size_t size)
 
 static void build_info(view *v)
 {
+    const tc_html_page *doc = &v->page.html;
     tc_dom_stats stats;
     char elements[32], texts[32];
-    const char *mode = v->document.doc->mode == TC_QUIRKS          ? "quirks mode"
-                       : v->document.doc->mode == TC_LIMITED_QUIRKS ? "limited-quirks mode"
-                                                                    : "standards mode";
+    const char *mode = doc->doc->mode == TC_QUIRKS          ? "quirks mode"
+                       : doc->doc->mode == TC_LIMITED_QUIRKS ? "limited-quirks mode"
+                                                             : "standards mode";
     size_t n;
 
-    tc_dom_count(&v->document.doc->node, &stats);
+    tc_dom_count(&doc->doc->node, &stats);
     with_commas(stats.elements, elements, sizeof elements);
     with_commas(stats.texts, texts, sizeof texts);
-    snprintf(v->info, sizeof v->info, "Document tree: %s elements, %s text nodes; %s (%s); %s",
-             elements, texts, tc_encoding_name(v->document.encoding), encoding_source_text(v->document.encoding_source),
-             mode);
-    tc_log("%s; depth %u, %u tree rows", v->info, (unsigned)stats.max_depth, (unsigned)v->outline.count);
-    if (!tc_encoding_supported(v->document.encoding)) {
+    snprintf(v->info, sizeof v->info, "Document tree: %s elements, %s text nodes; %s (%s); %s", elements, texts,
+             tc_encoding_name(doc->encoding), encoding_source_text(doc->encoding_source), mode);
+    tc_log("%s; depth %u", v->info, (unsigned)stats.max_depth);
+    if (!tc_encoding_supported(doc->encoding)) {
         n = strlen(v->info);
         snprintf(v->info + n, sizeof v->info - n, ". Tachyon can't decode %s yet, so some text will look wrong.",
-                 tc_encoding_name(v->document.encoding));
+                 tc_encoding_name(doc->encoding));
     }
 }
 
-/* Show the document as a tree or as source, whichever is wanted. */
-static int present_document(view *v)
+/* Get the tree or source ready for the mode. */
+static int prepare_mode(view *v)
 {
     v->top_line = 0;
     v->selected = -1;
-    if (v->show_source) {
-        v->page = PAGE_SOURCE;
-        if (fill_source(v, v->head, v->head_len, v->document.text.data, v->document.text.len) != TC_OK)
-            return TC_ERR_NOMEM;
-    } else {
-        source_free(&v->source);
-        v->page = PAGE_TREE;
+    switch (display_of(v)) {
+    case D_SOURCE:
+        if (!v->is_text)
+            return fill_source(v, v->head, v->head_len, v->page.html.text.data ? v->page.html.text.data : "",
+                               v->page.html.text.len);
+        return fill_source(v, v->head, v->head_len, v->text_body ? v->text_body : "", v->text_len);
+    case D_TREE:
+        if (!v->has_outline) {
+            if (tc_outline_init(&v->outline, &v->page.html.doc->node) != TC_OK)
+                return TC_ERR_NOMEM;
+            v->has_outline = 1;
+            build_info(v);
+        }
+        return TC_OK;
+    default:
+        return TC_OK;
     }
-    end_page(v);
-    return TC_OK;
 }
 
-int tw_view_show_document(HWND hwnd, const char *url, const char *head, size_t head_len, tc_html_page *page)
+static char *copy_mem(const char *s, size_t len)
 {
-    view *v = begin_page(hwnd, PAGE_TREE, url);
+    char *p = malloc(len + 1);
+    if (p) {
+        memcpy(p, s, len);
+        p[len] = '\0';
+    }
+    return p;
+}
+
+int tw_view_show_page(HWND hwnd, const char *head, size_t head_len, tc_page *page)
+{
+    view *v = get_view(hwnd);
+    int w, h;
 
     if (!v)
         return TC_ERR_INVALID;
-    v->document = *page;
+    clear_document(v);
+    v->page = *page;
     memset(page, 0, sizeof *page);
-    v->has_document = 1;
-    v->head = malloc(head_len + 1);
-    if (v->head) {
-        memcpy(v->head, head, head_len);
-        v->head[head_len] = '\0';
-        v->head_len = head_len;
+    v->has_page = 1;
+    snprintf(v->url, sizeof v->url, "%s", v->page.url.href ? v->page.url.href : "");
+    v->head = copy_mem(head ? head : "", head ? head_len : 0);
+    v->head_len = head ? head_len : 0;
+    tw_view_page_size(hwnd, &w, &h);
+    if (!v->page.layout || v->page.width != (float)w) {
+        if (tc_page_layout(&v->page, v->fonts, (float)w, (float)h) != TC_OK) {
+            tw_view_show_message(hwnd, v->url, "Out of memory", "This page is too big to show.", NULL);
+            return TC_ERR_NOMEM;
+        }
     }
-    if (!v->head || tc_outline_init(&v->outline, &v->document.doc->node) != TC_OK) {
-        tw_view_show_message(hwnd, url, "Out of memory", "This page is too big to show.", NULL);
+    tc_layout_size(v->page.layout, &v->doc_w, &v->doc_h);
+    if (prepare_mode(v) != TC_OK) {
+        tw_view_show_message(hwnd, v->url, "Out of memory", "This page is too big to show.", NULL);
         return TC_ERR_NOMEM;
     }
-    build_info(v);
-    return present_document(v);
+    finish(v);
+    return TC_OK;
 }
 
-int tw_view_set_show_source(HWND hwnd, int show_source)
+int tw_view_show_html(HWND hwnd, const char *url, const char *html)
+{
+    tc_html_page parsed;
+    tc_page page;
+    int err = tc_html_parse_page(html, strlen(html), "utf-8", NULL, &parsed);
+    if (!err)
+        err = tc_page_init(&page, url, &parsed);
+    else
+        tc_html_page_free(&parsed);
+    if (!err)
+        err = tw_view_show_page(hwnd, NULL, 0, &page);
+    if (err)
+        tc_log("couldn't show %s: %s", url, tc_err_text(err));
+    return err;
+}
+
+int tw_view_show_source(HWND hwnd, const char *url, const char *head, size_t head_len, const char *body,
+                        size_t body_len)
 {
     view *v = get_view(hwnd);
 
     if (!v)
+        return TC_ERR_INVALID;
+    clear_document(v);
+    snprintf(v->url, sizeof v->url, "%s", url ? url : "");
+    v->is_text = 1;
+    v->head = copy_mem(head, head_len);
+    v->head_len = head_len;
+    v->text_body = copy_mem(body, body_len);
+    v->text_len = body_len;
+    if (!v->head || !v->text_body || prepare_mode(v) != TC_OK) {
+        tw_view_show_message(hwnd, url, "Out of memory", "This page is too big to show.", NULL);
+        return TC_ERR_NOMEM;
+    }
+    finish(v);
+    return TC_OK;
+}
+
+int tw_view_set_mode(HWND hwnd, tw_view_mode mode)
+{
+    view *v = get_view(hwnd);
+    if (!v)
         return 0;
-    v->show_source = show_source;
-    if (v->has_document)
-        present_document(v);
-    return v->has_document;
+    v->mode = mode;
+    if (v->has_page && !v->is_text) {
+        if (prepare_mode(v) != TC_OK)
+            v->mode = TW_MODE_PAGE;
+        if (display_of(v) == D_PAGE && v->page.width != (float)v->width && v->width > 0)
+            relayout(v);
+        finish(v);
+        return 1;
+    }
+    return 0;
+}
+
+int tw_view_scroll_to_fragment(HWND hwnd, const char *fragment)
+{
+    view *v = get_view(hwnd);
+    float x, y;
+    if (!v || display_of(v) != D_PAGE)
+        return 0;
+    if (!fragment || !*fragment || strcmp(fragment, "top") == 0) {
+        scroll_page_to(v, 0, 0);
+        return 1;
+    }
+    if (!tc_page_fragment(&v->page, fragment, &x, &y))
+        return 0;
+    scroll_page_to(v, 0, (int)y);
+    return 1;
+}
+
+const char *tw_view_url(HWND hwnd)
+{
+    view *v = get_view(hwnd);
+    return v && v->has_page ? v->url : "";
 }
 
 void tw_view_set_warning(HWND hwnd, const char *warning)
 {
     view *v = get_view(hwnd);
-    if (v) {
+    if (v)
         snprintf(v->warning, sizeof v->warning, "%s", warning ? warning : "");
-        InvalidateRect(hwnd, NULL, FALSE);
-    }
 }
 
 int tw_view_paint_count(HWND hwnd)
 {
     view *v = get_view(hwnd);
     return v ? v->paint_count : 0;
+}
+
+/* ---- Built-in pages ---- */
+
+/* Append text with &, <, > and " escaped. */
+static void escaped(tc_buf *out, const char *s)
+{
+    for (; s && *s; s++)
+        switch (*s) {
+        case '&': tc_buf_append_str(out, "&amp;"); break;
+        case '<': tc_buf_append_str(out, "&lt;"); break;
+        case '>': tc_buf_append_str(out, "&gt;"); break;
+        case '"': tc_buf_append_str(out, "&quot;"); break;
+        default: tc_buf_append_char(out, *s); break;
+        }
+}
+
+/* The look of Tachyon's own pages. */
+static const char page_style[] =
+    "<style>"
+    "body { margin: 0; font: 15px Arial, sans-serif; background: white; color: black; }"
+    ".banner { background: #000080; color: white; padding: 10px 24px 14px; border-bottom: 4px solid #0000c0; }"
+    ".logo { font: italic bold 64px 'Times New Roman', serif; margin: 0; }"
+    ".tag { font: italic 20px Arial, sans-serif; color: #ffffa0; margin: 0 0 0 4px; }"
+    ".banner h1 { font: bold 22px Arial, sans-serif; margin: 6px 0 0; }"
+    ".main { padding: 6px 24px 16px; }"
+    "h2 { color: #000080; font-size: 18px; margin: 18px 0 6px; }"
+    ".url { color: #000080; font-weight: bold; font-size: 16px; margin: 16px 0 8px; }"
+    ".detail { color: #606060; font-size: 12px; }"
+    ".warning { background: #ffffc0; color: #800000; padding: 8px 10px; margin: 16px 0 0; border: 1px solid #d0d080; }"
+    ".footer { color: gray; font-size: 12px; margin-top: 20px; }"
+    "a { color: #0000ee; }"
+    "</style>";
+
+void tw_view_show_home(HWND hwnd)
+{
+    view *v = get_view(hwnd);
+    tc_buf html;
+    if (!v)
+        return;
+    tc_buf_init(&html);
+    tc_buf_printf(&html,
+                  "<!DOCTYPE html><html><head><meta charset=utf-8><title>Welcome to Tachyon</title>%s</head><body>"
+                  "<div class=banner><p class=logo>Tachyon</p><p class=tag>The modern web, sent back to 1995.</p>"
+                  "</div><div class=main>",
+                  page_style);
+    if (v->warning[0]) {
+        tc_buf_append_str(&html, "<p class=warning>");
+        escaped(&html, v->warning);
+        tc_buf_append_str(&html, "</p>");
+    }
+    tc_buf_printf(&html,
+                  "<h2>Sprint 3: First Light</h2>"
+                  "<p>Tachyon draws pages itself now: style sheets, fonts, layout and painting, all its own. Try "
+                  "<a href=\"https://en.wikipedia.org/wiki/Windows_95\">Windows 95 on Wikipedia</a> or "
+                  "<a href=\"https://example.com/\">example.com</a>. View &gt; Document Tree and View &gt; Page "
+                  "Source (Ctrl+U) show what's underneath.</p>"
+                  "<p>Tables, floats and positioned boxes are laid out one after another for now, and pictures "
+                  "show as frames with their descriptions.</p>"
+                  "<h2>Coming next</h2><ul>"
+                  "<li>Sprint 4: images and fonts</li><li>Sprint 5: JavaScript</li>"
+                  "<li>Sprint 6: forms, cookies and navigation</li><li>Sprint 7: modern layout</li></ul>"
+                  "<p class=footer>%s %s &bull; GNU GPL v3 &bull; <a href=\"%s\">%s</a> &bull; "
+                  "<a href=\"about:fonts\">Fonts</a></p></div></body></html>",
+                  TC_NAME, TC_VERSION, TC_HOMEPAGE, TC_HOMEPAGE);
+    tw_view_show_html(hwnd, "about:tachyon", html.data ? tc_buf_cstr(&html) : "");
+    tc_buf_free(&html);
+}
+
+void tw_view_show_blank(HWND hwnd)
+{
+    tw_view_show_html(hwnd, "about:blank", "<!DOCTYPE html><title>about:blank</title>");
+}
+
+void tw_view_show_message(HWND hwnd, const char *url, const char *heading, const char *text, const char *detail)
+{
+    tc_buf html;
+    tc_buf_init(&html);
+    tc_buf_printf(&html, "<!DOCTYPE html><html><head><meta charset=utf-8><title>");
+    escaped(&html, heading);
+    tc_buf_printf(&html, "</title>%s</head><body><div class=banner><h1>", page_style);
+    escaped(&html, heading);
+    tc_buf_append_str(&html, "</h1></div><div class=main>");
+    if (url && *url) {
+        tc_buf_append_str(&html, "<p class=url>");
+        escaped(&html, url);
+        tc_buf_append_str(&html, "</p>");
+    }
+    if (text) {
+        tc_buf_append_str(&html, "<p>");
+        escaped(&html, text);
+        tc_buf_append_str(&html, "</p>");
+    }
+    if (detail) {
+        tc_buf_append_str(&html, "<p class=detail>");
+        escaped(&html, detail);
+        tc_buf_append_str(&html, "</p>");
+    }
+    tc_buf_append_str(&html, "</div></body></html>");
+    tw_view_show_html(hwnd, url && *url ? url : "about:blank", html.data ? tc_buf_cstr(&html) : "");
+    tc_buf_free(&html);
+}
+
+void tw_view_show_fonts(HWND hwnd)
+{
+    view *v = get_view(hwnd);
+    tc_buf html;
+    size_t i, n;
+    if (!v)
+        return;
+    n = v->fonts ? tc_font_set_count(v->fonts) : 0;
+    tc_buf_init(&html);
+    tc_buf_printf(&html,
+                  "<!DOCTYPE html><html><head><meta charset=utf-8><title>Fonts</title>%s"
+                  "<style>td { padding: 2px 8px 2px 0; } .sample { font-size: 18px; }</style></head><body>"
+                  "<div class=banner><h1>Fonts</h1></div><div class=main><p>Tachyon found %u TrueType font faces "
+                  "(decision 27). Pages asking for serif get Times New Roman, sans-serif Arial and monospace "
+                  "Courier New.</p><table>",
+                  page_style, (unsigned)n);
+    for (i = 0; i < n; i++) {
+        int weight, italic;
+        const char *family = tc_font_set_face(v->fonts, i, &weight, &italic);
+        tc_buf_append_str(&html, "<tr><td>");
+        escaped(&html, family);
+        tc_buf_printf(&html, "</td><td>%d%s</td><td class=sample style=\"font-family: '", weight,
+                      italic ? " italic" : "");
+        escaped(&html, family);
+        tc_buf_printf(&html, "'; font-weight: %d; font-style: %s\">The quick brown fox jumps over the lazy dog"
+                             "</td></tr>",
+                      weight, italic ? "italic" : "normal");
+    }
+    tc_buf_append_str(&html, "</table></div></body></html>");
+    tw_view_show_html(hwnd, "about:fonts", html.data ? tc_buf_cstr(&html) : "");
+    tc_buf_free(&html);
 }

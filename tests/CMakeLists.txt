@@ -58,8 +58,10 @@ add_executable(tachyon_tests
   test_fixup.c
   test_font.c
   test_html.c
+  test_layout.c
   test_log.c
   test_net.c
+  test_page.c
   test_platform.c
   test_selector.c
   test_style.c
@@ -73,3 +75,12 @@ target_link_libraries(tachyon_tests PRIVATE tachyon_core)
 # Cross builds run this under CMAKE_CROSSCOMPILING_EMULATOR (Wine).
 add_test(NAME unit COMMAND tachyon_tests)
 tachyon_win95_check(tachyon_tests)
+
+# The reference tests: pages that must render like simpler pages.
+add_executable(tachyon_reftests reftest.c)
+target_link_libraries(tachyon_reftests PRIVATE render_page)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/reftest-failures)
+add_test(NAME reftests
+  COMMAND tachyon_reftests reftest.list ${CMAKE_CURRENT_BINARY_DIR}/reftest-failures
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/reftests)
+tachyon_win95_check(tachyon_reftests)

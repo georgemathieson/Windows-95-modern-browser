@@ -4,8 +4,10 @@
  * the progress callback; setting *cancel stops it within a fraction of a
  * second (except during a DNS lookup, which Windows can't interrupt).
  *
- * One request per connection for now ("Connection: close"); keep-alive comes
- * when pages load images and styles. */
+ * Given a connection pool, connections are kept open after a response and
+ * used again for the next request to the same server (HTTP keep-alive), which
+ * saves a TLS handshake: seconds on a Pentium. Given a cache, responses are
+ * kept in memory and served again (decision 30). */
 #ifndef TC_FETCH_H
 #define TC_FETCH_H
 
@@ -22,6 +24,9 @@ typedef enum tc_fetch_phase {
     TC_FETCH_REDIRECTING
 } tc_fetch_phase;
 
+typedef struct tc_conn_pool tc_conn_pool;
+typedef struct tc_cache tc_cache;
+
 typedef struct tc_fetch_options {
     const char *proxy_host;  /* an HTTP proxy, or NULL to connect directly */
     uint16_t proxy_port;
@@ -33,6 +38,10 @@ typedef struct tc_fetch_options {
     /* Called from the fetching thread. total is -1 when unknown. */
     void (*progress)(void *ctx, tc_fetch_phase phase, const char *host, size_t received, int64_t total);
     void *progress_ctx;
+    tc_conn_pool *pool;      /* keep connections open in here, or NULL */
+    tc_cache *cache;         /* serve and keep responses here, or NULL */
+    int reload;              /* with a cache: fetch anew (and keep the new response) */
+    const char *accept;      /* the Accept header; default for pages */
 } tc_fetch_options;
 
 typedef struct tc_response {
@@ -46,6 +55,7 @@ typedef struct tc_response {
     uint32_t elapsed_ms;
     tc_tls_info tls;        /* version and cipher for https, or why TLS failed */
     char error_detail[256]; /* more about a failure, for error pages */
+    int cached;             /* served from the cache */
 } tc_response;
 
 void tc_fetch_options_init(tc_fetch_options *o);
@@ -54,6 +64,19 @@ void tc_fetch_options_init(tc_fetch_options *o);
    failure. Free it with tc_response_free either way. */
 int tc_fetch(const char *url, const tc_fetch_options *opts, tc_response *out);
 void tc_response_free(tc_response *r);
+
+/* Connections kept open between requests, for any number of threads. */
+tc_conn_pool *tc_conn_pool_new(void);
+void tc_conn_pool_free(tc_conn_pool *p);
+/* How many connections have been opened, and used again (statistics). */
+void tc_conn_pool_stats(tc_conn_pool *p, unsigned *opened, unsigned *reused);
+
+/* Responses kept in memory, up to max_bytes of bodies, the least recently
+   used dropped first. Only successful (200) GET responses that don't say
+   no-store are kept. For any number of threads. */
+tc_cache *tc_cache_new(size_t max_bytes);
+void tc_cache_free(tc_cache *c);
+void tc_cache_stats(tc_cache *c, unsigned *hits, unsigned *misses);
 
 /* The User-Agent header Tachyon sends. */
 const char *tc_fetch_user_agent(void);

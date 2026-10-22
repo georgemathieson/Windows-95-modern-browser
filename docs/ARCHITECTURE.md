@@ -8,12 +8,22 @@ piece will live. It changes as the sprints land.
 ```
  +-----------------------------------------------------------------+
  |  src/platform/win32   TACHYON.EXE: windows, menus, input, page  |
- |                       loads on worker threads (loader.c),       |
- |                       blitting; Winsock, threads, entropy;      |
+ |                       loads on worker threads (loader.c), the   |
+ |                       page view and its scrolling (view.c);     |
+ |                       Winsock, threads, entropy, fonts;         |
  |                       TACHYON.LOG and crash reports (tw_log.c)  |
  |  src/platform/posix   the same platform functions for Linux     |
  +-----------------------------------------------------------------+
  |  src/core             the engine: portable C99, no OS headers   |
+ |    tc_page            a page: document, sheets, styles, layout, |
+ |                       links and fragments                       |
+ |    tc_layout, tc_box  the box tree, block and inline layout     |
+ |    tc_paint           painting and hit testing                  |
+ |    tc_style*          style sheets, cascade, computed values    |
+ |    tc_selector        selector parsing and matching             |
+ |    tc_css_syntax,     CSS tokenizer and parser; property values |
+ |    tc_css_values      and colours (+ tc_css_color)              |
+ |    tc_font            font matching, glyphs (stb_truetype)      |
  |    tc_html_parser     tree construction; page and fragment      |
  |                       parsing entry points                      |
  |    tc_html_tokenizer  the HTML tokenizer (+ tc_entities)        |
@@ -23,16 +33,18 @@ piece will live. It changes as the sprints land.
  |    tc_outline         the tree as DOM-inspector rows            |
  |    tc_url             WHATWG URL parsing                        |
  |    tc_fetch           a load: DNS, connect, proxy, TLS,         |
- |                       request, response, redirects, decoding    |
+ |                       request, response, redirects, decoding;   |
+ |                       kept-alive connections and a small cache  |
  |    tc_http, tc_mime   HTTP/1.1 messages and MIME types, no I/O  |
  |    tc_tls             Mbed TLS glue, root certificates          |
  |    tc_inflate         gzip and deflate                          |
  |    tc_entropy         the entropy pool (own SHA-256)            |
- |    tc_surface         32-bit pixels                             |
+ |    tc_surface, tc_png 32-bit pixels, and PNG files of them      |
  |    tc_log             the log and its ring of recent lines      |
- |    next: css, layout, paint (Sprint 3)                          |
+ |    next: images (Sprint 4), JavaScript (Sprint 5)               |
  +-----------------------------------------------------------------+
- |  third_party          Mbed TLS 4.1, zlib; QuickJS-ng (Sprint 5) |
+ |  third_party          Mbed TLS 4.1, zlib, stb_truetype;         |
+ |                       QuickJS-ng (Sprint 5)                     |
  +-----------------------------------------------------------------+
 ```
 
@@ -43,7 +55,7 @@ piece will live. It changes as the sprints land.
 - **Pixels are ours.** Pages render into a `tc_surface` (32-bit
   `0x00RRGGBB`), which on Windows wraps a DIB section, so a frame reaches the
   screen with one `BitBlt`. This gives the same output on every Windows
-  version and on the host, where reference tests will render pages to PNG.
+  version and on the host, where the reference tests render pages.
 - **The log.** `tc_log()` lines go to `TACHYON.LOG`; `tc_trace()` lines,
   for things too frequent for the disk (every scroll, every tree row
   drawn), only to a ring of the last 64 lines. When Tachyon crashes,
@@ -51,10 +63,11 @@ piece will live. It changes as the sprints land.
   addresses on the stack (named by `tools/symbolize.py` with the build's
   symbols file) and the ring. The next start says on the home page that it
   crashed.
-- **Text.** Until Sprint 3 the view uses GDI: `TextOutW` for page source and
-  the document tree (one of the few Unicode functions that works on
-  Windows 95) and ANSI text elsewhere. From Sprint 3, Tachyon rasterises
-  bundled fonts itself.
+- **Text.** Pages are set in the TrueType fonts Windows 95 already has,
+  found through the registry's Fonts key and rasterised by stb_truetype
+  (decision 27). With no fonts at all, text is drawn as boxes. The source
+  and tree views still use GDI: `TextOutW` (one of the few Unicode
+  functions that works on Windows 95), and ANSI text elsewhere.
 
 ## Loading a page
 
@@ -69,10 +82,13 @@ piece will live. It changes as the sprints land.
          tc_html_sniff (BOM, HTTP charset, <meta> prescan) -> tc_decode
          -> tokenizer <-> tree builder -> tc_document
          (a <meta> naming another encoding restarts the parse once)
+       then tc_page: the base URL, every <link rel=stylesheet> and @import
+         fetched over the same kept-alive connection (or from the cache),
+         styles computed and the page laid out for the view's size
        posts WM_TW_PROGRESS (throttled) and one WM_TW_DONE to the window
    |
-   +-- WM_TW_DONE: the view takes over the document and shows its tree
-       (tc_outline) or its source, or an error page; free the load
+   +-- WM_TW_DONE: the view takes over the page and paints it (or its tree
+       or source, or an error page); free the load
 ```
 
 Every blocking network call waits in 200 ms slices and checks the load's
@@ -108,6 +124,43 @@ and the test suites are its specification.
   `tests/fuzz` fuzzes the whole pipeline with libFuzzer, AddressSanitizer
   and UBSan, locally (`tools/fuzz.sh`) and in CI.
 
+## Rendering
+
+```
+ tc_document + style sheets (UA, <style>, <link>, @import, style="")
+   -> tc_style_document: selectors matched (rules bucketed by id, class
+      and tag; a Bloom filter of ancestors), the cascade (origins, layers,
+      !important), var() and calc(), computed values; equal styles shared
+   -> tc_layout_document: the box tree (anonymous boxes, list markers,
+      generated content), then block layout (margin collapsing) and inline
+      layout (items -> pieces -> lines -> fragments)
+   -> tc_paint: backgrounds, borders, text and decorations for a clip
+      rectangle, skipping boxes whose ink is outside it
+```
+
+- **Positions are relative.** Each box's border box is relative to its
+  parent's, and a line's fragments to their block, so painting and hit
+  testing walk the tree adding offsets, and each box records the area its
+  contents paint in, so whole subtrees outside the clip are skipped.
+- **The page view** (`view.c`) keeps a back buffer the size of the window:
+  a DIB section wrapped as a `tc_surface`. Scrolling moves the pixels
+  already there, paints only the strip that comes into view and lets
+  `ScrollWindowEx` move the screen. Windows 95's scroll bars count to
+  32,767, so long pages scroll in units of several pixels. Resizing lays
+  the page out again 150 ms after the last change.
+- **Limits.** The box tree stops nesting at 200 levels (deeper elements
+  flow into their ancestor), lengths stay within ±2^25 px and font sizes
+  within 10,000 px, and a page loads at most 64 style sheets, with imports
+  four deep. Glyphs bigger than 128×128 px aren't cached: each paint
+  rasterises only the part inside its clip.
+- **Testing.** `tachyon-render` (`tools/render`) renders a page from a file
+  to PNG on the host. The reference tests (`tests/reftests`) render each
+  test page and its reference and compare them pixel for pixel, natively
+  and under Wine, with the Liberation fonts (decision 27). Unit tests check
+  layout with the box font, so they don't depend on fonts, and the render
+  fuzzer (`tests/fuzz/fuzz_render.c`) runs pages and style sheets through
+  the whole pipeline under AddressSanitizer and UBSan.
+
 ## Threads
 
 Windows 95 has preemptive threads but none of the modern synchronisation
@@ -141,10 +194,13 @@ third_party/                        Mbed TLS, zlib, root certificates, WHATWG en
                                     character references (each with README.tachyon.md)
 tests/                              unit tests (host and Wine), conformance suites, test server, fuzzer
 tools/fetch/                        FETCH.EXE / tachyon-fetch
+tools/render/                       RENDER.EXE / tachyon-render: a page file to PNG
+tests/reftests/                     reference tests: test and reference pages, reftest.list
 tools/win95check/                   import and instruction checker, export lists
 tools/win95exports/                 EXPORTS.EXE: dumps real Windows 95 exports
-tools/gen_*.py                      build-time generators (icon, root certificates, encodings,
-                                    character references, URL and HTML tests, fuzz corpus)
+tools/gen_*.py                      build-time generators (icon, cursor, root certificates,
+                                    encodings, character references, the UA style sheet, URL,
+                                    HTML and CSS tests, fuzz corpora)
 tools/package.sh                    installer, zip, floppy image, ISO and symbols for testers
 tools/symbolize.py                  names the functions in a crash report from TACHYON.LOG
 tools/installer/                    SETUP.EXE's NSIS script; tools/test_installer.sh tests it

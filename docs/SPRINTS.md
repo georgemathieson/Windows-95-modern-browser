@@ -38,20 +38,20 @@ does not remember anything between sessions; this board does.
 
 **Definition of done**
 
-- [ ] CSS syntax: the tokenizer and parser of today's CSS Syntax Level 3, with `@charset` and BOM handling: **css-parsing-tests** (component values, declarations, rules, stylesheets, An+B, stylesheet bytes) pass, apart from a listed few where the 2021 tests and today's spec differ (decision 28)
-- [ ] Colours: named colours, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`: css-parsing-tests' colour files pass
-- [ ] Selectors Level 3 plus `:is()`, `:where()` and `:not()` with lists; specificity; matching fast enough for Wikipedia (rules bucketed by id, class and tag)
-- [ ] The cascade: the HTML Standard's user-agent stylesheet, `<style>`, `<link rel=stylesheet>`, `@import`, `style` attributes, `!important`, inheritance, `initial`/`inherit`/`unset`, custom properties and `var()`, and media queries for screen width (full media queries stay in Sprint 7)
-- [ ] Computed values for what block and inline layout need: display, box model (margin, border, padding, width, height, min/max, box-sizing), lengths (px, em, rem, ex, ch, %, vw/vh, pt and friends) with `calc()`, colour and background colour, fonts, text (align, indent, decoration, transform, white-space, spacing), vertical-align, visibility, list styles, `::before`/`::after` with string content
-- [ ] Text: Windows 95's own TrueType fonts (Arial, Times New Roman, Courier New and the rest installed) rasterised by stb_truetype into `tc_surface`, with font matching, bold and italic, and a glyph cache (decision 27). GDI text retires from the page view
-- [ ] Layout: the box tree (anonymous boxes, list markers, generated content, `<br>`, `<img>` as a placeholder with its alt text); block layout with auto widths, auto margins and margin collapsing; inline layout with line breaking, white-space handling, text-align and vertical-align; inline-block. Tables, floats and positioning are laid out as blocks until Sprint 7 (decision 29)
-- [ ] Painting: backgrounds, borders (solid, dashed, dotted, double and Windows 95's own inset, outset, groove and ridge), text and its decorations, list markers; only the visible part is painted
-- [ ] The browser shows rendered pages by default (View > Page), with the document tree and source one menu away; scrolling by scroll bar, wheel and keyboard; links show a hand and their address in the status bar, and clicking one follows it (`#fragment` links scroll); window resizing lays the page out again; `about:` pages are HTML
-- [ ] Loading: stylesheets fetched after the page, over kept-alive connections reused per host, with a small in-memory cache (decision 30)
-- [ ] Reference tests: `tachyon-render` lays out and paints a page to PNG on the host; reftests compare a test page with its reference pixel for pixel under ctest, natively and under Wine
-- [ ] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
+- [x] CSS syntax: the tokenizer and parser of today's CSS Syntax Level 3, with `@charset` and BOM handling: **css-parsing-tests** (component values, declarations, rules, stylesheets, An+B, stylesheet bytes) pass, apart from a listed few where the 2021 tests and today's spec differ (decision 28)
+- [x] Colours: named colours, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`: css-parsing-tests' colour files pass
+- [x] Selectors Level 3 plus `:is()`, `:where()` and `:not()` with lists; specificity; matching fast enough for Wikipedia (rules bucketed by id, class and tag)
+- [x] The cascade: the HTML Standard's user-agent stylesheet, `<style>`, `<link rel=stylesheet>`, `@import`, `style` attributes, `!important`, inheritance, `initial`/`inherit`/`unset`, custom properties and `var()`, and media queries for screen width (full media queries stay in Sprint 7)
+- [x] Computed values for what block and inline layout need: display, box model (margin, border, padding, width, height, min/max, box-sizing), lengths (px, em, rem, ex, ch, %, vw/vh, pt and friends) with `calc()`, colour and background colour, fonts, text (align, indent, decoration, transform, white-space, spacing), vertical-align, visibility, list styles, `::before`/`::after` with string content
+- [x] Text: Windows 95's own TrueType fonts (Arial, Times New Roman, Courier New and the rest installed) rasterised by stb_truetype into `tc_surface`, with font matching, bold and italic, and a glyph cache (decision 27). GDI text retires from the page view
+- [x] Layout: the box tree (anonymous boxes, list markers, generated content, `<br>`, `<img>` as a placeholder with its alt text); block layout with auto widths, auto margins and margin collapsing; inline layout with line breaking, white-space handling, text-align and vertical-align; inline-block. Tables, floats and positioning are laid out as blocks until Sprint 7 (decision 29)
+- [x] Painting: backgrounds, borders (solid, dashed, dotted, double and Windows 95's own inset, outset, groove and ridge), text and its decorations, list markers; only the visible part is painted
+- [x] The browser shows rendered pages by default (View > Page), with the document tree and source one menu away; scrolling by scroll bar, wheel and keyboard; links show a hand and their address in the status bar, and clicking one follows it (`#fragment` links scroll); window resizing lays the page out again; `about:` pages are HTML
+- [x] Loading: stylesheets fetched after the page, over kept-alive connections reused per host, with a small in-memory cache (decision 30)
+- [x] Reference tests: `tachyon-render` lays out and paints a page to PNG on the host; reftests compare a test page with its reference pixel for pixel under ctest, natively and under Wine
+- [x] The CSS parser survives fuzzing; CI renders the real sites under Wine (FETCH.EXE --render) without crashing
 - [ ] **George reads a Wikipedia article in Tachyon on Windows 95** (the demo)
-- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release (George tags `v0.2.0` once PR #4 is merged)
+- [ ] Carried over from Sprint 2: the Tachyon 0.2.0 release. PR #4 is merged, but `main` has moved on to 0.3.0 with PR #5, so the tag `v0.2.0` goes on PR #4's merge commit, `02f36df` (on GitHub: draft a release, new tag `v0.2.0`, target that commit)
 
 ## Upcoming sprints
 
@@ -92,7 +92,7 @@ Grow the test builds' installer (NSIS, since Sprint 2: decision 25) into the alp
 
 Unscheduled. Pull items into a sprint when they serve its goal.
 
-- **Crash on a two-finger trackpad scroll (George, Sprint 2; low priority).** On Windows 95 C in a virtual machine on a Mac, scrolling any loaded page with two fingers ends in "an invalid page fault in module KERNEL32.DLL". The stack pointer is outside the thread's own stack, in Windows 95's shared memory where its 16-bit code runs. The scroll bar and its buttons are fine, so suspect the wheel messages (`WM_MOUSEWHEEL` and IntelliPoint's `MSWHEEL_ROLLMSG`, handled in `view.c`) and how the virtual machine's mouse driver delivers them. The crash report in `TACHYON.LOG` (decision 26) should show the rest.
+- **Crash on a two-finger trackpad scroll (George, Sprint 2; low priority).** On Windows 95 C in a virtual machine on a Mac, scrolling any loaded page with two fingers ends in "an invalid page fault in module KERNEL32.DLL". The stack pointer is outside the thread's own stack, in Windows 95's shared memory where its 16-bit code runs. The scroll bar and its buttons are fine, so suspect the wheel messages (`WM_MOUSEWHEEL` and IntelliPoint's `MSWHEEL_ROLLMSG`, handled in `view.c`) and how the virtual machine's mouse driver delivers them. The crash report in `TACHYON.LOG` (decision 26) should show the rest. Sprint 3 rewrote the view, including its wheel handling (which now keeps the remainder of a trackpad's small steps), so George is to try it again (step 10 of the testing guide).
 - **Period-correct toolchain (before the alpha).** Ubuntu's MinGW-w64 runtime (libgcc, libmingwex, startup code) is compiled for the Pentium Pro and uses `cmov`, so today's builds crash at startup on an original Pentium, a Pentium MMX or an AMD K6. Build GCC's runtime and the MinGW-w64 CRT with `-march=i586`, cache the toolchain in CI, then set `TACHYON_ISA_FLOOR=i586`. Ubuntu's prebuilt NSIS installer stub uses `cmov` too, so it needs rebuilding the same way. Could be a short sprint of its own.
 - **Measure TLS on period hardware:** handshake times for RSA and ECDSA sites on an emulated Pentium II (86Box), the status bar's "Done" and "read in" timings on George's machine, and the entropy pool's strength without CryptoAPI.
 - **Full UTS #46** (internationalised domain names): the mapping table, NFC, and the bidi and joiner rules. 31 web-platform-tests host cases wait on it.
@@ -105,6 +105,10 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - Parsing while downloading, which `document.write()` and progressive rendering both need.
 - DOM memory: page text is kept twice (the decoded page and its text nodes). Make text nodes slices of the decoded page, or drop the decoded page once there's a renderer.
 - The document tree view: horizontal scrolling, finding text, copying a node.
+- `file:` URLs in the browser (tachyon-render already reads files).
+- Text fragments: each word and each space is a fragment of its own. Merging neighbours on a line would save memory and paint calls on long pages; measure on Windows 95 first (a 12,000-word page lays out in 30 ms natively).
+- `:target` compares ids with the percent-encoded fragment, so it misses non-ASCII ids (scrolling to them already decodes).
+- Selecting and copying text on a page.
 - Reading Internet Explorer's proxy settings from the registry.
 - HTTP/2 (most sites still accept HTTP/1.1).
 - Brotli content encoding (needed for WOFF2 in Sprint 4 anyway).
@@ -152,6 +156,10 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 | 28 | CSS parsing follows today's CSS Syntax Level 3. css-parsing-tests (written against the 2021 draft) cases that disagree are listed with the reason, like the HTML parser's | Same approach as decision 19: browsers ship today's spec | Sprint 3 |
 | 29 | Tables, floats and positioned boxes are laid out as ordinary blocks until Sprint 7 | They need layout algorithms of their own; as blocks, Wikipedia's infobox and navigation tables still read top to bottom | Sprint 3 |
 | 30 | HTTP keep-alive and a small in-memory cache, revisiting decision 11 | Pages now load stylesheets, mostly from the same host: a new TLS handshake for each costs seconds on a Pentium | Sprint 3 |
+| 31 | The user-agent style sheet is the HTML Standard's rendering section (whatwg/html at commit c6c3055c), compiled in by `tools/gen_ua_css.py`, with every change listed at the top of `src/core/ua.css` | Pages are written against browsers that use these rules; following the text keeps us honest, like the parser (decision 19) | Sprint 3 |
+| 32 | One pipeline for a page (`tc_page`): the browser, `FETCH --render` and `tachyon-render` differ only in how they fetch style sheets. The browser's own pages (home, errors, `about:fonts`) are HTML drawn by the same engine | What CI and the reference tests check is then what George sees; the old GDI page drawing goes | Sprint 3 |
+| 33 | Windows 95's gaps in the page view are filled by hand: a hand cursor of our own (no `IDC_HAND`), polling every 100 ms while the mouse is over a link (no `TrackMouseEvent`), and scroll positions in units small enough for 16-bit scroll bars | Those APIs arrived with Windows 98 and NT 4; win95check refuses them | Sprint 3 |
+| 34 | Limits a hostile or broken page can't get past: boxes nest 200 deep, lengths stay within ±2<sup>25</sup> px (as in Chromium), font sizes within 10,000 px, documents stop at 10<sup>8</sup> px, glyphs bigger than 128×128 px aren't cached but rasterised only where they show, and a page loads at most 64 style sheets with imports 4 deep | Windows 95's 1 MB stack and small memory, C's rules (an infinite float converted to an int is undefined), and time: the render fuzzer found each of these | Sprint 3 |
 
 ## Risks
 
@@ -162,8 +170,9 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 - **Hand-curated export lists.** kernel32 and crtdll come from Wine's 1998 reconstruction of Windows 95; the rest are from knowledge. Verify with real DLLs. The installer added OLE32 and eight functions (decision 25); George's `EXPORTS.TXT` will confirm them.
 - **Clocks.** Certificate checks need the right date, and VM clocks are often wrong. Tachyon warns, but can't fix it.
 - **Scope.** "Full HTML5" is unbounded; the conformance suites and the site list keep us honest.
-- **The floppy is nearly full.** TACHYON.EXE is 1.1 MB stripped, leaving 249 KB on the 1.44 MB floppy, and Sprint 3's fonts won't fit. The installer compresses everything into 639 KB, so a floppy with SETUP.EXE on it is the way out for a while; the CD image already carries it.
+- **The floppy holds the installer, not the browser.** TACHYON.EXE grew to 1.4 MB stripped in Sprint 3 and no longer fits on a 1.44 MB floppy, so the floppy image now carries SETUP.EXE (798 KB compressed, with 576 KB to spare). Sprint 9's "install from a floppy" goal holds while the installer fits; after that it needs a second disk.
 - **Parsing speed on a Pentium.** GitHub's 572 KB home page parses in 7 ms on the build machine; a 1990s CPU may be a hundred times slower. George's "read in" timings will tell.
+- **Layout and painting speed on a Pentium.** A 12,000-word article lays out in 30 ms natively and paints a screen in about 4 ms; a hundred times slower would still be usable, but Wikipedia's real styles are heavier than our test page. Under Wine in CI, Wikipedia's article styles in 13 ms and lays out in 15 ms; George's "shown in" times are the real measure.
 
 ## Sprint history
 
@@ -171,6 +180,14 @@ Unscheduled. Pull items into a sprint when they serve its goal.
 
 - Started on top of Sprint 2's branch, since PR #4 (installer and log) wasn't merged yet.
 - Scope refined: custom properties, `calc()` and width media queries come forward from Sprint 7 because Wikipedia's styles depend on them; tables, floats and positioning stay blocks (decision 29); fonts come from Windows 95 itself (decision 27).
+- CSS from today's specifications: the syntax (css-parsing-tests: 8,334 of 8,366, the other 32 listed where the tests predate the spec), colours up to CSS Color 4, values with `calc()`, selectors with a Bloom filter of ancestors, the cascade with layers, nesting, custom properties and width media queries, and the HTML Standard's user-agent style sheet (decision 31).
+- Text: stb_truetype over Windows 95's own fonts, with kerning, synthetic bold and italic, and a 2 MB glyph cache (decision 27).
+- Layout and painting: the box tree, block layout with margin collapsing, inline layout, inline blocks, lists, generated content, Windows 95-style 3D borders. `tachyon-render` renders a file to PNG; 49 reference tests compare pages pixel for pixel, natively and under Wine.
+- The browser draws pages (decision 32): a back buffer that scrolls by moving pixels, links with a hand cursor and the status bar, `#fragment` links, re-layout after resizing, View > Page, Tree and Source. Style sheets load over kept-alive connections with a small cache (decision 30). Windows 95's missing APIs needed stand-ins (decision 33).
+- Hardening: unit tests for layout, `tc_page` and the PNG encoder; a second fuzz target that runs pages and style sheets through the whole renderer. In its first half hour it found an empty selector list doing arithmetic on a null pointer (twice), an empty nested selector that CSS Nesting says makes the rule invalid, font sizes and lengths big enough to overflow to infinity, and a page that took 41 seconds because glyphs a thousand pixels tall were rasterised whole on every paint and never fitted the glyph cache; now big glyphs are rasterised only where they show (54 ms). Decision 34 lists the limits. CI fuzzes both targets and renders the real sites under Wine, keeping PNGs of them.
+- First numbers from CI (FETCH.EXE under Wine, on GitHub's runners): Wikipedia's Windows 95 article (550 KB, 4,146 elements, 2 style sheets over one kept-alive connection) styles in 13 ms and lays out in 15 ms, with 3.1 MB of styles and boxes; GitHub's home page (28 style sheets, 30,701 selectors) styles in 147 ms with 7.5 MB.
+- TACHYON.EXE (1.4 MB) outgrew the floppy, which now carries the installer.
+- George merged the branch into `main` at the fonts commit as PR #5 (2026-10-22), after PR #4. No `v0.2.0` tag yet.
 
 ### Sprint 2: HTML5 parser and DOM (2026-10-21; merged as PR #3, the installer and log in PR #4)
 

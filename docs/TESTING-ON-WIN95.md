@@ -17,7 +17,7 @@ latest successful **CI** run on that branch, and download the
 |---|---|
 | `tachyon-VERSION-win95-setup.exe` | The installer: copy it in through a shared folder, or use the CD image, which carries it as `SETUP.EXE` |
 | `tachyon-VERSION-win95.iso` | A CD-ROM image with `SETUP.EXE` and the programs, if your VM has a CD drive and driver |
-| `tachyon-VERSION-win95.img` | A 1.44 MB floppy image with `TACHYON.EXE`: works in every emulator, and every Windows 95 install can read it |
+| `tachyon-VERSION-win95.img` | A 1.44 MB floppy image with the installer as `SETUP.EXE`: works in every emulator, and every Windows 95 install can read it |
 | `tachyon-VERSION-win95.zip` | The programs, for shared folders or real hardware |
 
 Or build it yourself (see the README) and run `tools/package.sh`.
@@ -26,8 +26,9 @@ Or build it yourself (see the README) and run `tools/package.sh`.
 
 Mount the ISO as the CD drive and run `SETUP.EXE` from it (or run the setup
 program from wherever you copied it). Without a CD drive, mount the floppy
-image as drive A: and run `TACHYON.EXE` from there, or copy it to the hard
-disk first: it needs no other files.
+image as drive A: and run `SETUP.EXE` from there. (Since Sprint 3,
+`TACHYON.EXE` is too big for a floppy by itself.) Once installed,
+`TACHYON.EXE` needs no other files, so you can also copy it anywhere.
 
 ## 3. Which emulator
 
@@ -55,45 +56,55 @@ is wrong.
 
 We can't distribute Windows 95. You need your own copy.
 
-## 4. This sprint's test (Sprint 2: HTML5 parser and DOM)
+## 4. This sprint's test (Sprint 3: First Light)
 
-It includes Sprint 1's test, which hasn't been run on Windows 95 yet.
+The demo: **read a Wikipedia article in Tachyon on Windows 95.**
 
-1. In Windows 95, check that networking works: **Start > Run**, `winipcfg`
-   should show an IP address. Set the date and time to today's.
-2. Install Tachyon with the setup program (see section 2): Next on the
-   licence, keep all three components, keep `C:\Program Files\Tachyon`,
-   then Install and Close. Check for **Start > Programs > Tachyon** (three
-   shortcuts) and a Tachyon icon on the desktop, then answer Yes to start
-   Tachyon. If the home page shows a yellow warning about the clock, fix the
-   clock first.
-3. Type `example.com` and press Enter. You should see the page's
-   **document tree**: `<!DOCTYPE html>`, `<html>`, a closed `<head>` and an
-   open `<body>`, in colour, with a grey line above it giving the number of
-   elements and the encoding. The window title should be "Example Domain".
-4. Click the **[+]** next to `<head>` to open it, and click it again to
-   close it. Then try the keyboard: Up and Down move the selection, Left and
-   Right close and open, Enter toggles.
-5. Press **Ctrl+U**: the page's source appears (the response headers in
-   blue). Press Ctrl+U again for the tree. **View > Document Tree** and
-   **View > Page Source** do the same.
-6. Try `en.wikipedia.org/wiki/Windows_95` and `news.ycombinator.com`.
-   Scroll with Page Down, the scroll bar or the mouse wheel. Press Back.
-7. Load a page and press **Stop** (or Esc) while it loads.
-8. Open **Help > About Tachyon** and note the "Randomness" line.
-9. Optional: open an MS-DOS Prompt in `C:\Program Files\Tachyon` and run
-   `FETCH --dom -q https://example.com`, which prints a one-line summary of
-   the parse.
-10. Run `EXPORTS.EXE` in `C:\Program Files\Tachyon` and send us the
-    `EXPORTS.TXT` it writes (see section 6). The installer uses some Windows
-    functions that we haven't checked against a real Windows 95 yet.
-11. Copy `EXPORTS.TXT` somewhere safe, then uninstall: **Control Panel >
-    Add/Remove Programs**, pick **Tachyon 0.2.0**, click **Add/Remove**.
-    The folder, the shortcuts and the list entry should all go.
+1. In Windows 95, check that networking works (**Start > Run**, `winipcfg`
+   should show an IP address) and that the date and time are today's.
+2. Install Tachyon with the setup program (see section 2), over the old
+   version if you have it, and start it. The home page is now drawn by
+   Tachyon itself: a navy banner, then text and links.
+3. Click **Fonts** at the bottom of the home page (or type `about:fonts`).
+   It lists the fonts Tachyon found in Windows. Arial, Times New Roman and
+   Courier New should be there. Please send us the list.
+4. Click **Windows 95 on Wikipedia** (or type
+   `en.wikipedia.org/wiki/Windows_95`). While it loads, the status bar
+   names each style sheet it fetches. Then the article appears, in
+   Wikipedia's colours and fonts. Expected for now: pictures are empty
+   frames, or just their descriptions (Sprint 4), and tables, side columns
+   and floating boxes, like the infobox, are laid out one under another
+   rather than side by side (Sprint 7).
+5. Read some of it. Scroll with the scroll bar, Page Up and Page Down, the
+   arrow keys, Home and End, and the mouse wheel.
+6. Point at a link: the pointer becomes a hand and the status bar shows
+   where it goes. Click a heading in the article's contents: the page
+   jumps there and the address ends in `#...`. Click a link to another
+   article, then press **Back**.
+7. Resize the window, and maximise it: the text reflows to the new width
+   a moment after you stop.
+8. **View > Document Tree** shows the page's tree, **View > Page Source**
+   its source, and **View > Page** the page again. **Ctrl+U** goes back
+   and forth between the page and its source.
+9. Press **F5** to reload, and press **Stop** (or Esc) while a page loads.
+10. If your mouse has a wheel, or your virtual machine passes a trackpad's
+    two-finger scrolling on as a wheel: Sprint 2's crash on two-finger
+    scrolling (see the backlog) was in drawing code that has been
+    rewritten. Please try it again on a long page.
+11. Optional: in an MS-DOS Prompt in `C:\Program Files\Tachyon`, run
+    `FETCH -q --render https://en.wikipedia.org/wiki/Windows_95`. It loads
+    and lays out the page without showing it, and prints how long each
+    step took and how much memory the page used.
 
-Please report, for each site, the status bar's "Done: N KB in N s, read in
-N s" (the first time tells us how fast TLS is on your hardware, "read in"
-how fast the parser is) and the About box's "Randomness" line.
+Please report:
+
+- For the Wikipedia article and one or two other sites: the status bar's
+  "Done: N KB in N s; N style sheets; shown in N s" (the time to download,
+  then the time to fetch the style sheets and lay the page out), and how
+  long scrolling a screen takes, roughly.
+- Anything drawn wrongly, with a screenshot if you can (Print Screen, then
+  paste into Paint), and anything slow.
+- Any crash, with the end of `TACHYON.LOG` (section 5).
 
 ## 5. What to report
 

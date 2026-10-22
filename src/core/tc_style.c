@@ -790,7 +790,7 @@ static void presentational_hints(styler *st, const tc_element *el, hints *h)
     const char *a;
 
     h->n = 0;
-    if (el->node.ns != TC_NS_HTML || !el->attr_count)
+    if (el->node.ns != TC_NS_HTML || (!el->attr_count && el->node.tag != TC_TAG_CENTER))
         return;
     switch (el->node.tag) {
     case TC_TAG_BODY:
@@ -1514,7 +1514,7 @@ static void length_of(styler *st, float font_size, const tc_pval *v, tc_length *
     tc_length_basis b;
     memset(out, 0, sizeof *out);
     if (v->kind == PV_NUMBER) {
-        out->px = v->n.f;
+        out->px = tc_length_clamp(v->n.f);
         return;
     }
     if (v->kind != PV_LENGTH)
@@ -1522,6 +1522,8 @@ static void length_of(styler *st, float font_size, const tc_pval *v, tc_length *
     basis_of(st, font_size, &b);
     if (tc_calc_compute(&st->out->arena, v->ptr, &b, out) != TC_OK)
         st->nomem = 1;
+    out->px = tc_length_clamp(out->px);
+    out->pct = tc_length_clamp(out->pct);
 }
 
 /* A length resolved now, percentages against pct_basis. */
@@ -1555,6 +1557,8 @@ static float keyword_size(int k, int mono)
     static const float scale[] = { 3.0f / 5, 3.0f / 4, 8.0f / 9, 1, 6.0f / 5, 3.0f / 2, 2, 3 };
     return scale[TC_CLAMP(k, 0, 7)] * (mono ? 13 : 16);
 }
+
+#define MAX_FONT_SIZE 10000
 
 static void compute_font_size(styler *st, tc_style *s, const tc_style *parent, const tc_pval *v)
 {
@@ -1721,7 +1725,7 @@ static void apply(styler *st, tc_style *s, const tc_style *parent, uint16_t p, c
             s->line_height = 0;
         } else if (v->kind == PV_NUMBER) {
             s->line_height_kind = TC_LINE_HEIGHT_NUMBER;
-            s->line_height = v->n.f;
+            s->line_height = tc_length_clamp(v->n.f);
         } else {
             s->line_height_kind = TC_LINE_HEIGHT_PX;
             s->line_height = px_of(st, s->font_size, v, s->font_size);
@@ -1833,6 +1837,9 @@ static void compute(styler *st, tc_style *s, const tc_style *parent, const tc_el
         if (first[i] == P_FONT_SIZE) {
             if (s->font_size_keyword)
                 s->font_size = keyword_size(s->font_size_keyword - 1, is_monospace(s)) * s->font_size_factor;
+            /* Nothing legible is bigger, and layout's arithmetic stays finite (NaN too). */
+            if (!(s->font_size <= MAX_FONT_SIZE))
+                s->font_size = MAX_FONT_SIZE;
             if (is_root)
                 st->root_font_size = s->font_size;
         }
@@ -1889,6 +1896,26 @@ static void compute(styler *st, tc_style *s, const tc_style *parent, const tc_el
         s->decorations |= s->decoration_line;
         s->decorations_color = s->decoration_color;
     }
+}
+
+void tc_style_initial(tc_style *out)
+{
+    int i;
+    initial_style(out);
+    for (i = 0; i < 4; i++)
+        out->border_width[i] = 0; /* computed: border-style is none */
+}
+
+void tc_style_anonymous(tc_style *out, const tc_style *parent, int display)
+{
+    size_t inh = offsetof(tc_style, color);
+    int i;
+    tc_style_initial(out);
+    memcpy((char *)out + inh, (const char *)parent + inh, sizeof *out - inh);
+    out->display = (uint8_t)display;
+    for (i = 0; i < 4; i++)
+        out->border_color[i] = out->color;
+    out->decoration_color = out->color;
 }
 
 /* ---- Sharing styles ---- */

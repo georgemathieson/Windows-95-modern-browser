@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - name: Install build tools and the Liberation fonts (the reference tests use them)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build fonts-liberation
       - run: cmake --preset host -DTACHYON_WERROR=ON
       - run: cmake --build --preset host
       - run: ctest --preset host
@@ -30,7 +30,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build mingw-w64 wine wine32:i386 xvfb xauth zip mtools genisoimage nsis
+            ninja-build mingw-w64 wine wine32:i386 xvfb xauth zip mtools genisoimage nsis fonts-liberation
       - name: Prepare Wine
         run: wineboot --init && wineserver --wait
       - run: cmake --preset win95 -DTACHYON_WERROR=ON
@@ -53,14 +53,18 @@ jobs:
             dist/*.txt
 
   fuzz:
-    name: Fuzz the HTML parser (libFuzzer, ASan, UBSan)
+    name: Fuzz the HTML parser and the renderer (libFuzzer, ASan, UBSan)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang and its runtime libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build clang libclang-rt-18-dev
-      - name: Fuzz for three minutes
-        run: tools/fuzz.sh 180 2
+      - name: Install clang, its runtime libraries and the Liberation fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build clang libclang-rt-18-dev fonts-liberation
+      - name: Fuzz the HTML parser for two minutes
+        run: tools/fuzz.sh 120 2 html
+      - name: Fuzz CSS, styles, layout and painting for three minutes
+        run: tools/fuzz.sh 180 2 render
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -68,7 +72,7 @@ jobs:
           path: build/fuzz/crashes/
 
   real-sites:
-    name: Real websites over HTTPS, parsed (packaged FETCH.EXE under Wine)
+    name: Real websites over HTTPS, rendered (packaged FETCH.EXE under Wine)
     needs: win95
     runs-on: ubuntu-24.04
     env:
@@ -83,12 +87,13 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine wine32:i386 unzip
+          sudo apt-get install -y --no-install-recommends wine wine32:i386 unzip fonts-liberation
       - name: Prepare Wine
         run: wineboot --init && wineserver --wait
-      - name: Fetch and parse real sites, trusting only Mozilla's roots
+      - name: Fetch and render real sites with their style sheets, trusting only Mozilla's roots
         run: |
           cd artifact && unzip -q tachyon-*-win95.zip
+          mkdir ../renders
           failed=0
           for url in https://example.com/ \
                      https://en.wikipedia.org/wiki/Windows_95 \
@@ -99,14 +104,21 @@ jobs:
                      https://www.bbc.co.uk/news \
                      https://www.yahoo.co.jp/ \
                      http://example.com/; do
+            name=$(echo "$url" | sed 's|://|-|; s|[^A-Za-z0-9.-]|_|g; s|_*$||')
             ok=0
             for attempt in 1 2 3; do
-              if wine TACHYON/FETCH.EXE -q --dom "$url"; then ok=1; break; fi
+              if wine TACHYON/FETCH.EXE -q --render --fonts 'Z:\usr\share\fonts\truetype\liberation' \
+                   --png "../renders/$name.png" "$url"; then ok=1; break; fi
               sleep 5
             done
             if [ "$ok" = 0 ]; then echo "::error::FETCH.EXE could not load $url"; failed=1; fi
           done
           exit $failed
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-site-renders
+          path: renders/
 
   # A tag v<version> publishes that build as a GitHub pre-release, once the
   # unit and Wine tests have passed. Push the tag, or publish a release with

@@ -10,17 +10,25 @@
 
 typedef struct start_args {
     tw_load *load;
+    tw_load_options opts;
     char *proxy_host;
-    uint16_t proxy_port;
 } start_args;
 
 /* Progress posts are throttled: a fast download shouldn't flood the UI. */
 #define PROGRESS_INTERVAL_MS 150
 
+static void post_progress(tw_load *load, int force)
+{
+    uint32_t now = GetTickCount();
+    if (force || now - load->last_post_ms >= PROGRESS_INTERVAL_MS) {
+        load->last_post_ms = now;
+        PostMessageA(load->notify, WM_TW_PROGRESS, 0, (LPARAM)load);
+    }
+}
+
 static void on_progress(void *ctx, tc_fetch_phase phase, const char *host, size_t received, int64_t total)
 {
     tw_load *load = ctx;
-    uint32_t now = GetTickCount();
     int phase_changed = load->phase != phase;
 
     load->phase = phase;
@@ -28,36 +36,87 @@ static void on_progress(void *ctx, tc_fetch_phase phase, const char *host, size_
     load->total = total;
     if (phase_changed)
         snprintf(load->host, sizeof load->host, "%s", host ? host : "");
-    if (phase_changed || now - load->last_post_ms >= PROGRESS_INTERVAL_MS) {
-        load->last_post_ms = now;
-        PostMessageA(load->notify, WM_TW_PROGRESS, 0, (LPARAM)load);
-    }
+    post_progress(load, phase_changed);
 }
 
-/* Parse an HTML response into a document, here on the worker thread so the
-   window stays responsive. The raw body isn't needed after that. */
-static void parse_page(tw_load *load)
+static void on_sheet(void *ctx, unsigned n, const char *url)
+{
+    tw_load *load = ctx;
+    load->sheet = n;
+    snprintf(load->sheet_url, sizeof load->sheet_url, "%s", url);
+    tc_log("loader: style sheet %u: %.120s", n, url);
+    post_progress(load, 1);
+}
+
+typedef struct sheet_fetch {
+    tw_load *load;
+    tc_fetch_options opts;
+} sheet_fetch;
+
+static int fetch_sheet(void *ctx, const char *url, tc_buf *body, char *charset, size_t size)
+{
+    sheet_fetch *f = ctx;
+    if (f->load->cancel)
+        return TC_ERR_CANCELLED;
+    return tc_page_fetch_http(&f->opts, url, body, charset, size);
+}
+
+static void sheet_progress(void *ctx, unsigned n, const char *url)
+{
+    on_sheet(((sheet_fetch *)ctx)->load, n, url);
+}
+
+/* Parse an HTML response, fetch its style sheets and lay it out, here on the
+   worker thread so the window stays responsive. */
+static void build_page(tw_load *load, const tw_load_options *o, const tc_fetch_options *fo)
 {
     tc_buf *body = &load->response.body;
+    tc_html_page parsed;
     tc_mime mime;
+    sheet_fetch sf;
     uint32_t start;
+    int err;
 
     if (!tc_mime_wants_html(tc_headers_get(&load->response.headers, "Content-Type"), body->data, body->len, &mime))
         return;
-    load->parsing = 1;
-    PostMessageA(load->notify, WM_TW_PROGRESS, 0, (LPARAM)load);
+    load->stage = TW_STAGE_READING;
+    post_progress(load, 1);
     tc_log("loader: parsing %u KB", (unsigned)(body->len / 1024));
     start = tc_time_ms();
-    if (tc_html_parse_page(body->data, body->len, mime.charset, NULL, &load->page) != TC_OK) {
+    err = tc_html_parse_page(body->data ? body->data : "", body->len, mime.charset, NULL, &parsed);
+    if (!err)
+        err = tc_page_init(&load->page, load->response.url ? load->response.url : load->url, &parsed);
+    else
+        tc_html_page_free(&parsed);
+    if (err) {
         tc_log("loader: out of memory parsing");
-        tc_html_page_free(&load->page);
+        tc_page_free(&load->page);
         return;
     }
+    load->has_page = 1;
     load->parse_ms = tc_time_ms() - start;
     tc_log("loader: parsed in %u ms, %u KB of memory", (unsigned)load->parse_ms,
-           (unsigned)((load->page.doc->arena.total + load->page.text.cap) / 1024));
-    load->is_html = 1;
+           (unsigned)((load->page.html.doc->arena.total + load->page.html.text.cap) / 1024));
     tc_buf_free(body);
+
+    load->stage = TW_STAGE_STYLES;
+    start = tc_time_ms();
+    sf.load = load;
+    sf.opts = *fo;
+    sf.opts.reload = 0; /* style sheets from the cache even on a reload */
+    tc_page_load_styles(&load->page, fetch_sheet, &sf, sheet_progress);
+    load->styles_ms = tc_time_ms() - start;
+    tc_log("loader: %u style sheets (%u failed) in %u ms", load->page.sheets_loaded, load->page.sheets_failed,
+           (unsigned)load->styles_ms);
+    if (load->cancel)
+        return;
+
+    load->stage = TW_STAGE_LAYOUT;
+    post_progress(load, 1);
+    if (tc_page_layout(&load->page, o->fonts, (float)o->width, (float)o->height) != TC_OK)
+        tc_log("loader: out of memory laying out");
+    else
+        tc_log("loader: styles in %u ms, layout in %u ms", load->page.style_ms, load->page.layout_ms);
 }
 
 static void load_thread(void *arg)
@@ -68,17 +127,22 @@ static void load_thread(void *arg)
 
     tc_fetch_options_init(&opts);
     opts.proxy_host = args->proxy_host;
-    opts.proxy_port = args->proxy_port;
+    opts.proxy_port = args->opts.proxy_port;
     opts.cancel = &load->cancel;
     opts.progress = on_progress;
     opts.progress_ctx = load;
+    opts.pool = args->opts.pool;
+    opts.cache = args->opts.cache;
+    opts.reload = args->opts.reload;
     tc_log("loader: fetching %.120s", load->url);
     load->result = tc_fetch(load->url, &opts, &load->response);
     load->body_len = load->response.body.len;
-    tc_log("loader: %s, %u bytes", load->result == TC_OK ? "fetched" : tc_err_text(load->result),
-           (unsigned)load->body_len);
-    if (load->result == TC_OK && !load->cancel)
-        parse_page(load);
+    tc_log("loader: %s, %u bytes%s", load->result == TC_OK ? "fetched" : tc_err_text(load->result),
+           (unsigned)load->body_len, load->response.cached ? " (from the cache)" : "");
+    if (load->result == TC_OK && !load->cancel) {
+        opts.progress = NULL;
+        build_page(load, &args->opts, &opts);
+    }
     free(args->proxy_host);
     free(args);
     PostMessageA(load->notify, WM_TW_DONE, 0, (LPARAM)load);
@@ -93,7 +157,7 @@ static char *copy_string(const char *s)
     return p;
 }
 
-tw_load *tw_load_start(HWND notify, const char *url, const char *proxy_host, uint16_t proxy_port)
+tw_load *tw_load_start(HWND notify, const char *url, const tw_load_options *o)
 {
     tw_load *load = calloc(1, sizeof *load);
     start_args *args = calloc(1, sizeof *args);
@@ -105,8 +169,8 @@ tw_load *tw_load_start(HWND notify, const char *url, const char *proxy_host, uin
     load->phase = TC_FETCH_RESOLVING;
     load->total = -1;
     args->load = load;
-    args->proxy_port = proxy_port;
-    if (!load->url || (proxy_host && !(args->proxy_host = copy_string(proxy_host))))
+    args->opts = *o;
+    if (!load->url || (o->proxy_host && !(args->proxy_host = copy_string(o->proxy_host))))
         goto fail;
     if (tc_thread_start(load_thread, args) != TC_OK)
         goto fail;
@@ -131,7 +195,8 @@ void tw_load_free(tw_load *load)
 {
     if (load) {
         tc_response_free(&load->response);
-        tc_html_page_free(&load->page);
+        if (load->has_page)
+            tc_page_free(&load->page);
         free(load->url);
         free(load);
     }
