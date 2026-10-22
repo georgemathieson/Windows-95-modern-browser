@@ -55,8 +55,19 @@ add_custom_command(
   COMMENT "Compiling test files"
   VERBATIM)
 
+# Samples of the Chinese, Japanese and Korean encoding indexes.
+file(GLOB ENCODING_INDEXES ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding/index-*.txt)
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/encoding_cases.c
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_encoding_tests.py
+          ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding ${CMAKE_CURRENT_BINARY_DIR}/encoding_cases.c
+  DEPENDS ${PROJECT_SOURCE_DIR}/tools/gen_encoding_tests.py ${ENCODING_INDEXES}
+  COMMENT "Sampling encoding indexes"
+  VERBATIM)
+
 add_executable(tachyon_tests
   ${CMAKE_CURRENT_BINARY_DIR}/url_cases.c
+  ${CMAKE_CURRENT_BINARY_DIR}/encoding_cases.c
   ${CMAKE_CURRENT_BINARY_DIR}/html_cases.c
   ${CMAKE_CURRENT_BINARY_DIR}/css_cases.c
   ${CMAKE_CURRENT_BINARY_DIR}/blobs.c

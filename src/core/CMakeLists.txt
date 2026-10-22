@@ -22,7 +22,8 @@ add_custom_command(
   COMMENT "Compiling root certificates"
   VERBATIM)
 
-# The WHATWG Encoding Standard's labels and single-byte tables.
+# The WHATWG Encoding Standard's labels and indexes.
+file(GLOB ENCODING_INDEXES ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding/index-*.txt)
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_encoding_data.c
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_encodings.py
@@ -32,6 +33,7 @@ add_custom_command(
           ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_encoding_data.c
   DEPENDS ${PROJECT_SOURCE_DIR}/tools/gen_encodings.py
           ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding/encodings.json
+          ${ENCODING_INDEXES}
           ${CMAKE_CURRENT_SOURCE_DIR}/tc_encoding.h
   COMMENT "Compiling encoding tables"
   VERBATIM)

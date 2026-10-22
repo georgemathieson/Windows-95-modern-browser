@@ -3,9 +3,10 @@
 
 Usage: gen_encodings.py encodings.json INDEX_DIR tc_encoding.h OUTPUT.c
 
-Writes every encoding's name, every label (sorted, for binary search) and the
-128-entry tables of the single-byte encodings. Checks that the tc_encoding
-enum in tc_encoding.h lists the encodings in the standard's order.
+Writes every encoding's name, every label (sorted, for binary search), the
+128-entry tables of the single-byte encodings and the indexes of the
+Chinese, Japanese and Korean ones. Checks that the tc_encoding enum in
+tc_encoding.h lists the encodings in the standard's order.
 """
 
 import json
@@ -31,6 +32,52 @@ def read_index(path):
                 sys.exit("gen_encodings.py: unexpected entry in %s: %s" % (path, line))
             table[pointer] = code_point
     return table
+
+
+def read_multi_byte(path):
+    """A multi-byte index: {pointer: code point}."""
+    table = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            pointer, code_point = line.split("\t")[:2]
+            table[int(pointer)] = int(code_point, 16)
+    return table
+
+
+def c_array(out, ctype, ident, values, per_line=12):
+    out.append("const %s %s[%d] = {\n" % (ctype, ident, len(values)))
+    for row in range(0, len(values), per_line):
+        out.append("    " + ", ".join("%d" % v for v in values[row:row + per_line]) + ",\n")
+    out.append("};\n")
+
+
+def multi_byte_tables(index_dir, out):
+    """The indexes as arrays by pointer, 0 where there's no code point. Big5's
+    code points beyond the BMP are all in plane 2: a bit says so."""
+    sizes = {"jis0208": 11104, "jis0212": 7211, "gb18030": 23940, "euc-kr": 23750, "big5": 19782}
+    for name, size in sizes.items():
+        index = read_multi_byte(os.path.join(index_dir, "index-%s.txt" % name))
+        if max(index) >= size:
+            sys.exit("gen_encodings.py: index-%s.txt has pointers past %d" % (name, size))
+        values = [index.get(p, 0) for p in range(size)]
+        ident = "tc_encoding_" + name.replace("-", "_")
+        if name == "big5":
+            plane2 = [0] * ((size + 7) // 8)
+            for p, cp in enumerate(values):
+                if cp > 0xFFFF:
+                    if cp >> 16 != 2:
+                        sys.exit("gen_encodings.py: Big5 code point outside planes 0 and 2: %X" % cp)
+                    plane2[p // 8] |= 1 << (p % 8)
+            c_array(out, "uint8_t", "tc_encoding_big5_plane2", plane2, 16)
+            values = [cp & 0xFFFF for cp in values]
+        elif max(values) > 0xFFFF:
+            sys.exit("gen_encodings.py: index-%s.txt goes past the BMP" % name)
+        c_array(out, "uint16_t", ident, values)
+    ranges = sorted(read_multi_byte(os.path.join(index_dir, "index-gb18030-ranges.txt")).items())
+    c_array(out, "uint32_t", "tc_encoding_gb18030_ranges", [v for pair in ranges for v in pair], 8)
 
 
 def main():
@@ -74,7 +121,8 @@ def main():
         single.append(ident)
     out.append("\nconst uint16_t *const tc_encoding_single_byte[TC_ENC_COUNT] = {\n")
     out += ["    %s,\n" % ident for ident in single]
-    out.append("};\n")
+    out.append("};\n\n")
+    multi_byte_tables(index_dir, out)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("".join(out))
 
