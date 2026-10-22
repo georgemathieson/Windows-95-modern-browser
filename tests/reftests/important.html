@@ -1,0 +1,5 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>body { margin: 0; font: 16px sans-serif; }</style>
+<!-- !important beats specificity and the style attribute -->
+<style>#x { color: red } p { color: green !important }</style><p id="x" style="color: red">x</p>

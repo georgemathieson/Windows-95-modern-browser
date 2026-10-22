@@ -790,7 +790,7 @@ static void presentational_hints(styler *st, const tc_element *el, hints *h)
     const char *a;
 
     h->n = 0;
-    if (el->node.ns != TC_NS_HTML || !el->attr_count)
+    if (el->node.ns != TC_NS_HTML || (!el->attr_count && el->node.tag != TC_TAG_CENTER))
         return;
     switch (el->node.tag) {
     case TC_TAG_BODY:
@@ -1889,6 +1889,26 @@ static void compute(styler *st, tc_style *s, const tc_style *parent, const tc_el
         s->decorations |= s->decoration_line;
         s->decorations_color = s->decoration_color;
     }
+}
+
+void tc_style_initial(tc_style *out)
+{
+    int i;
+    initial_style(out);
+    for (i = 0; i < 4; i++)
+        out->border_width[i] = 0; /* computed: border-style is none */
+}
+
+void tc_style_anonymous(tc_style *out, const tc_style *parent, int display)
+{
+    size_t inh = offsetof(tc_style, color);
+    int i;
+    tc_style_initial(out);
+    memcpy((char *)out + inh, (const char *)parent + inh, sizeof *out - inh);
+    out->display = (uint8_t)display;
+    for (i = 0; i < 4; i++)
+        out->border_color[i] = out->color;
+    out->decoration_color = out->color;
 }
 
 /* ---- Sharing styles ---- */

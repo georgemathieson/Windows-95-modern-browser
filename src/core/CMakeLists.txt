@@ -63,6 +63,7 @@ add_library(tachyon_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_entities.c
   ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_ua_css.c
   tc_arena.c
+  tc_box.c
   tc_buf.c
   tc_css_color.c
   tc_css_syntax.c
@@ -80,9 +81,12 @@ add_library(tachyon_core STATIC
   tc_html_tokenizer.c
   tc_http.c
   tc_inflate.c
+  tc_layout.c
   tc_log.c
   tc_mime.c
   tc_outline.c
+  tc_paint.c
+  tc_png.c
   tc_selector.c
   tc_sha256.c
   tc_style.c
