@@ -32,6 +32,8 @@ HWND tw_view_create(HWND parent, HINSTANCE instance, int id, tc_font_set *fonts)
 
 /* The size pages should be laid out for. */
 void tw_view_page_size(HWND view, int *w, int *h);
+/* The document rows in view. */
+void tw_view_visible(HWND view, int *top, int *bottom);
 
 /* A page from HTML text (built-in pages). */
 int tw_view_show_html(HWND view, const char *url, const char *html);

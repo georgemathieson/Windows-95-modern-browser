@@ -5,16 +5,23 @@
  * The first input byte picks the mode and the viewport width. Even modes:
  * the rest is a page. Odd modes: the rest is a style sheet, applied to a
  * fixed page with a bit of everything. Text is set in the Liberation fonts
- * if they're installed (so glyph code runs too), else the box font. */
+ * if they're installed (so glyph code runs too), else the box font. The
+ * painted pixels are animated and dithered as the browser would. */
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_dither.h"
 #include "tc_page.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static const char fixed_page[] =
     "<!DOCTYPE html><html lang=en><head><title>t</title><style id=fuzz></style></head><body class=b>"
+    "<img class=anim src='data:image/gif;base64,"
+    "R0lGODlhBAAEAPAAAP8AAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQECgAAACH/C0ltYWdlTWFnaWNrDmdhbW1hPTAuNDU0"
+    "NTQ1ACwAAAAABAAEAAACBISPCQUAIfkEBBQAAAAh/wtJbWFnZU1hZ2ljaw5nYW1tYT0wLjQ1NDU0NQAsAAAAAAIAAgCAAP8A"
+    "AAAAAgKEUQAh+QQEHgAAACH/C0ltYWdlTWFnaWNrDmdhbW1hPTAuNDU0NTQ1ACwAAAAABAAEAIAAAP8AAAACBISPCQUAOw=='>"
+    "<img src=later.png>"
     "<h1 id=top>Heading <small>small</small></h1>"
     "<p>Some <a href='#x'>link</a> text with <b>bold</b>, <i>italic</i>, <code>code</code>"
     " and <span style='display:inline-block;padding:2px'>an inline block</span>.<br>After a break.</p>"
@@ -60,6 +67,8 @@ static void exercise(tc_page *p, float w)
 {
     tc_surface s;
     tc_url url;
+    tc_rect dirty;
+    size_t order[16];
     float x, y, dw, dh;
     int i;
 
@@ -72,8 +81,18 @@ static void exercise(tc_page *p, float w)
         tc_paint(p->layout, &s, tc_rect_make(0, 0, 64, 48), 0, 0);
         tc_paint(p->layout, &s, tc_rect_make(5, 5, 50, 30), dw / 3, dh / 2);
         tc_paint(p->layout, &s, tc_rect_make(0, 0, 64, 48), 0, dh - 48);
+        /* Animations move on and are painted again; a palette display's
+           copy is dithered. */
+        tc_page_animate(p, 1000, &dirty);
+        tc_page_animate(p, 1100, &dirty);
+        tc_paint(p->layout, &s, tc_rect_make(dirty.x, dirty.y - (int)(dh - 48), dirty.w, dirty.h), 0, dh - 48);
+        {
+            static uint8_t index[64 * 48];
+            tc_dither(&s, tc_rect_make(0, 0, 64, 48), index, 64, (int)(dw / 3), (int)(dh / 2));
+        }
         tc_surface_free(&s);
     }
+    tc_page_image_order(p, dh / 3, dh / 2, order, TC_ARRAY_LEN(order));
     for (i = 0; i < 16; i++) {
         x = (float)(i * 37 % 300);
         y = dh * (float)i / 16;

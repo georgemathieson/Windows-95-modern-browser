@@ -57,11 +57,17 @@ enum { TC_PAGE_IMAGE_WAITING, TC_PAGE_IMAGE_LOADED, TC_PAGE_IMAGE_FAILED };
 size_t tc_page_image_count(const tc_page *p);
 const char *tc_page_image_url(const tc_page *p, size_t i);
 int tc_page_image_state(const tc_page *p, size_t i);
+/* The pictures still waiting, in the order to load them: those showing
+   between document rows top and bottom (the viewport) first, then those
+   below it, nearest first, then those above, then any the page doesn't
+   show. Writes at most max indexes to order; returns how many. */
+size_t tc_page_image_order(const tc_page *p, float top, float bottom, size_t *order, size_t max);
 /* An image arrived (taken over), or failed to load (NULL). Returns 1 if
    the page must be laid out again, because layout waited for its size. */
 int tc_page_image_arrived(tc_page *p, size_t i, tc_image *img);
-/* Fetch and decode the header of every picture still waiting, laying out
-   again (at the last size) if any were waited for. For the tools and
+/* Fetch and decode the header of every picture still waiting, those on
+   the first screen first, laying out again (at the last size) if any were
+   waited for. For the tools and
    tests; the browser loads them as tc_page_image_arrived describes. */
 int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, void *ctx,
                         void (*progress)(void *ctx, unsigned n, const char *url));

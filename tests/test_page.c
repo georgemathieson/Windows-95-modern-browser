@@ -446,6 +446,42 @@ static void test_image_memory(void)
     tc_font_set_free(fonts);
 }
 
+/* The order pictures load in: what's in view first. */
+static void test_image_order(void)
+{
+    static const char *const from_top[] = { "top", "bg", "mid", "bottom", "hidden" };
+    static const char *const from_middle[] = { "mid", "bottom", "bg", "top", "hidden" };
+    tc_font_set *fonts = tc_font_set_new();
+    size_t order[8], n, i;
+    tc_page p;
+    char url[64];
+    PAGE_FROM(&p, "http://example.com/",
+              "<!DOCTYPE html><style>body { margin: 0 } img { display: block; width: 10px; height: 10px }"
+              "#bg { height: 10px; background: url(bg.png) } .pad { height: 1000px }</style>"
+              "<img src=hidden.png style='display: none'><img src=top.png><div id=bg></div><div class=pad></div>"
+              "<img src=mid.png><div class=pad></div><img src=bottom.png>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    n = tc_page_image_order(&p, 0, 300, order, TC_ARRAY_LEN(order));
+    TC_CHECK_INT(n, 5);
+    for (i = 0; i < n && i < 5; i++) {
+        snprintf(url, sizeof url, "http://example.com/%s.png", from_top[i]);
+        TC_CHECK_STR(tc_page_image_url(&p, order[i]), url);
+    }
+    /* Scrolled to the middle: then below, then above, nearest first. */
+    n = tc_page_image_order(&p, 1000, 1300, order, TC_ARRAY_LEN(order));
+    TC_CHECK_INT(n, 5);
+    for (i = 0; i < n && i < 5; i++) {
+        snprintf(url, sizeof url, "http://example.com/%s.png", from_middle[i]);
+        TC_CHECK_STR(tc_page_image_url(&p, order[i]), url);
+    }
+    TC_CHECK_INT(tc_page_image_order(&p, 0, 300, order, 2), 2);
+    /* Loaded ones aren't listed. */
+    tc_page_image_arrived(&p, order[0], NULL);
+    TC_CHECK_INT(tc_page_image_order(&p, 0, 300, order, TC_ARRAY_LEN(order)), 4);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
 /* frames.gif: red for 100 ms, a green corner for 200, blue for 300. */
 static void test_animation(void)
 {
@@ -503,5 +539,6 @@ void tc_suite_page(void)
     TC_RUN(test_image_sources);
     TC_RUN(test_image_loading);
     TC_RUN(test_image_memory);
+    TC_RUN(test_image_order);
     TC_RUN(test_animation);
 }

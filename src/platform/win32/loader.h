@@ -68,8 +68,10 @@ void tw_load_free(tw_load *load);
  * job then. */
 typedef struct tw_images tw_images;
 
-/* NULL if the page has no pictures waiting, or memory ran out. */
-tw_images *tw_images_start(HWND notify, const tc_page *page, const tw_load_options *opts);
+/* The pictures between document rows top and bottom (the part in view)
+   load first. NULL if the page has no pictures waiting, or memory ran
+   out. */
+tw_images *tw_images_start(HWND notify, const tc_page *page, int top, int bottom, const tw_load_options *opts);
 /* For a WM_TW_IMAGE: the picture's index in the page, and its image (NULL
    if it couldn't be loaded), handed over. */
 size_t tw_images_index(const tw_images *job, WPARAM slot);

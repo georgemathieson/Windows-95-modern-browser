@@ -1198,6 +1198,15 @@ void tw_view_page_size(HWND hwnd, int *w, int *h)
     *h = TC_MAX(client.bottom, 100);
 }
 
+void tw_view_visible(HWND hwnd, int *top, int *bottom)
+{
+    view *v = get_view(hwnd);
+    RECT client;
+    GetClientRect(hwnd, &client);
+    *top = v ? v->sy : 0;
+    *bottom = *top + client.bottom;
+}
+
 /* ---- Showing pages ---- */
 
 static void finish(view *v)

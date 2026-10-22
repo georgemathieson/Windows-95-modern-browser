@@ -746,18 +746,132 @@ int tc_page_image_arrived(tc_page *p, size_t i, tc_image *img)
     return e->waited && img;
 }
 
+/* ---- Which pictures to load first ---- */
+
+#define MAX_WALK_DEPTH 400 /* more than layout nests boxes */
+
+typedef struct load_rank {
+    int group;   /* 0: in view, 1: below it, 2: above it, 3: not shown */
+    float key;   /* nearest the view first */
+    size_t index;
+} load_rank;
+
+typedef struct ranking {
+    const struct tc_page_images *im;
+    float top, bottom;
+    load_rank *ranks;  /* by picture */
+} ranking;
+
+static void rank_image(ranking *r, const void *key, float y, float h)
+{
+    const ref *found = key ? ref_find(r->im, key) : NULL;
+    load_rank rank, *best;
+    if (!found)
+        return;
+    if (y < r->bottom && y + h > r->top)
+        rank.group = 0, rank.key = y;
+    else if (y >= r->bottom)
+        rank.group = 1, rank.key = y;
+    else
+        rank.group = 2, rank.key = -y;
+    best = &r->ranks[found->index];
+    if (rank.group < best->group || (rank.group == best->group && rank.key < best->key))
+        best->group = rank.group, best->key = rank.key;
+}
+
+static void rank_box(ranking *r, const tc_box *b, float y, float h)
+{
+    const tc_style *s = b->style;
+    uint32_t i;
+    if (b->element)
+        rank_image(r, b->element, y, h);
+    if (!s)
+        return;
+    for (i = 0; s->backgrounds && i < s->backgrounds->count; i++)
+        rank_image(r, s->backgrounds->layers[i].image, y, h);
+    rank_image(r, s->list_style_image, y, h);
+}
+
+/* Every picture's best place, in one walk of the box tree. */
+static void rank_boxes(ranking *r, const tc_box *b, float oy, int depth)
+{
+    float y = oy + b->y;
+    const tc_box *c;
+    uint32_t i;
+    if (depth > MAX_WALK_DEPTH)
+        return;
+    rank_box(r, b, y, b->h);
+    for (i = 0; i < b->nfrags; i++) {
+        const tc_frag *f = &b->frags[i];
+        if (f->type == TC_FRAG_ATOMIC)
+            rank_boxes(r, f->box, y, depth + 1);
+        else if (f->type == TC_FRAG_BOX)
+            rank_box(r, f->box, y + f->y, f->h);
+    }
+    if (!b->has_lines)
+        for (c = b->first; c; c = c->next)
+            rank_boxes(r, c, y, depth + 1);
+}
+
+static int compare_ranks(const void *pa, const void *pb)
+{
+    const load_rank *a = pa, *b = pb;
+    if (a->group != b->group)
+        return a->group < b->group ? -1 : 1;
+    if (a->key != b->key)
+        return a->key < b->key ? -1 : 1;
+    return a->index < b->index ? -1 : a->index > b->index;
+}
+
+size_t tc_page_image_order(const tc_page *p, float top, float bottom, size_t *order, size_t max)
+{
+    const struct tc_page_images *im = p->images;
+    ranking r;
+    size_t i, n = 0;
+    if (!im)
+        return 0;
+    r.im = im;
+    r.top = top;
+    r.bottom = bottom;
+    r.ranks = malloc((im->n ? im->n : 1) * sizeof *r.ranks);
+    for (i = 0; r.ranks && i < im->n; i++) {
+        r.ranks[i].group = 3;
+        r.ranks[i].key = 0;
+        r.ranks[i].index = i;
+    }
+    if (r.ranks && p->layout && tc_layout_root(p->layout))
+        rank_boxes(&r, tc_layout_root(p->layout), 0, 0);
+    for (i = 0; i < im->n; i++) /* the waiting ones, together */
+        if (im->items[i].state == TC_PAGE_IMAGE_WAITING) {
+            if (r.ranks)
+                r.ranks[n++] = r.ranks[i];
+            else if (n < max)
+                order[n++] = i; /* no memory to sort: document order */
+        }
+    if (r.ranks) {
+        qsort(r.ranks, n, sizeof *r.ranks, compare_ranks);
+        n = TC_MIN(n, max);
+        for (i = 0; i < n; i++)
+            order[i] = r.ranks[i].index;
+        free(r.ranks);
+    }
+    return n;
+}
+
 int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, void *ctx,
                         void (*progress)(void *ctx, unsigned n, const char *url))
 {
-    size_t i;
+    size_t k, n = tc_page_image_count(p), *order = malloc((n ? n : 1) * sizeof *order);
     unsigned loaded = 0;
     int relayout = 0;
-    for (i = 0; i < tc_page_image_count(p); i++) {
+    if (!order)
+        return TC_ERR_NOMEM;
+    n = tc_page_image_order(p, 0, p->height, order, n);
+    for (k = 0; k < n; k++) {
+        size_t i = order[k];
         tc_buf body;
         char charset[64];
         tc_image *img = NULL;
-        if (tc_page_image_state(p, i) != TC_PAGE_IMAGE_WAITING)
-            continue;
         if (progress)
             progress(ctx, ++loaded, tc_page_image_url(p, i));
         tc_buf_init(&body);
@@ -766,6 +880,7 @@ int tc_page_load_images(tc_page *p, tc_font_set *fonts, tc_page_fetch_fn fetch, 
         tc_buf_free(&body);
         relayout |= tc_page_image_arrived(p, i, img);
     }
+    free(order);
     return relayout && p->layout ? tc_page_layout(p, fonts, p->width, p->height) : TC_OK;
 }
 

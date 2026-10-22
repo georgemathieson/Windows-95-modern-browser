@@ -251,34 +251,36 @@ static void images_thread(void *arg)
     PostMessageA(job->notify, WM_TW_IMAGES_DONE, 0, (LPARAM)job);
 }
 
-tw_images *tw_images_start(HWND notify, const tc_page *page, const tw_load_options *opts)
+tw_images *tw_images_start(HWND notify, const tc_page *page, int top, int bottom, const tw_load_options *opts)
 {
-    size_t i, n = tc_page_image_count(page);
+    size_t i, n = tc_page_image_count(page), count, *order;
     tw_images *job;
-    unsigned count = 0;
 
-    for (i = 0; i < n; i++)
-        count += tc_page_image_state(page, i) == TC_PAGE_IMAGE_WAITING;
-    if (!count || !(job = calloc(1, sizeof *job)))
+    if (!n || !(order = malloc(n * sizeof *order)))
         return NULL;
+    count = tc_page_image_order(page, (float)top, (float)bottom, order, n);
+    if (!count || !(job = calloc(1, sizeof *job))) {
+        free(order);
+        return NULL;
+    }
     job->notify = notify;
     job->opts = *opts;
     job->items = calloc(count, sizeof *job->items);
     if (!job->items || (opts->proxy_host && !(job->proxy_host = copy_string(opts->proxy_host))))
         goto fail;
-    for (i = 0; i < n; i++) {
-        if (tc_page_image_state(page, i) != TC_PAGE_IMAGE_WAITING)
-            continue;
-        job->items[job->count].index = i;
-        if (!(job->items[job->count].url = copy_string(tc_page_image_url(page, i))))
+    for (i = 0; i < count; i++) {
+        job->items[job->count].index = order[i];
+        if (!(job->items[job->count].url = copy_string(tc_page_image_url(page, order[i]))))
             goto fail;
         job->count++;
     }
+    free(order);
     if (tc_thread_start(images_thread, job) != TC_OK)
         goto fail;
     return job;
 
 fail:
+    free(order);
     tw_images_free(job);
     return NULL;
 }

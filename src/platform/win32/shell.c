@@ -168,10 +168,12 @@ static void start_images(shell *sh)
 {
     const tc_page *page = tw_view_page(sh->view);
     tw_load_options opts;
+    int top, bottom;
     if (!page)
         return;
     load_options(sh, &opts);
-    sh->images = tw_images_start(sh->hwnd, page, &opts);
+    tw_view_visible(sh->view, &top, &bottom);
+    sh->images = tw_images_start(sh->hwnd, page, top, bottom, &opts);
 }
 
 static void on_image(shell *sh, WPARAM slot, tw_images *job)
