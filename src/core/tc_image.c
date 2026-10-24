@@ -266,11 +266,13 @@ int tc_image_new(const void *data, size_t len, tc_image **out)
     if (img->type == TC_IMAGE_NONE) {
         err = TC_ERR_DECODE;
     } else if (img->type == TC_IMAGE_SVG) {
-        float w, h;
+        float w = 0, h = 0;
         img->codec = TC_IMAGE_NONE;
         err = tc_svg_parse(data, len, &img->svg, &w, &h);
-        img->w = img->want_w = (int)ceil(w);
-        img->h = img->want_h = (int)ceil(h);
+        if (!err) { /* w and h are only set when it parses */
+            img->w = img->want_w = (int)ceil(w);
+            img->h = img->want_h = (int)ceil(h);
+        }
     } else if (img->type == TC_IMAGE_ICO) {
         dib d;
         err = read_ico(img, &d);
