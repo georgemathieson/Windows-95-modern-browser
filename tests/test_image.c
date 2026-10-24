@@ -231,6 +231,23 @@ static void test_svg(void)
     TC_CHECK_INT(tc_image_memory(img), (size_t)s->width * s->height * 4);
     tc_image_free(img);
 
+    /* Drawable however absurd the geometry: an edge almost horizontal, a
+       point 1e30 away, a stroke 1e30 wide (NanoSVG converted each to int
+       out of range; the image fuzzer found the first). */
+    {
+        static const char *const absurd[] = { "svg-flat-edge.svg", "svg-far-point.svg", "svg-wide-stroke.svg" };
+        size_t i;
+        for (i = 0; i < TC_ARRAY_LEN(absurd); i++) {
+            img = open_image(absurd[i]);
+            TC_CHECK(img != NULL);
+            if (!img)
+                continue;
+            TC_CHECK_INT(tc_image_decode(img, NO_LIMIT), TC_OK);
+            TC_CHECK(tc_image_pixels(img) != NULL);
+            tc_image_free(img);
+        }
+    }
+
     /* No size at all, or an absurd one. */
     TC_CHECK_INT(tc_image_new("<svg></svg>", 11, &img), TC_ERR_DECODE);
     TC_CHECK_INT(tc_image_new("<svg width='100000' height='10'></svg>", 38, &img), TC_ERR_TOO_LARGE);

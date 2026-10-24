@@ -333,6 +333,23 @@ static float nsvg__normalize(float *x, float* y)
 static float nsvg__absf(float x) { return x < 0 ? -x : x; }
 static float nsvg__roundf(float x) { return (x >= 0) ? floorf(x + 0.5) : ceilf(x - 0.5); }
 
+// Tachyon: converting a float outside int's range is undefined behaviour,
+// and an edge far off the canvas or almost horizontal makes one. Edges are
+// kept within NSVG__COORD_LIMIT (pixels across, subsamples down), far past
+// any canvas, so stepping along them in fixed point can't overflow either.
+#define NSVG__COORD_LIMIT 262144.0f
+#define NSVG__FIX_LIMIT (1 << 29)
+static float nsvg__limitf(float x)
+{
+	if (isnan(x)) return 0;
+	return x < -NSVG__COORD_LIMIT ? -NSVG__COORD_LIMIT : x > NSVG__COORD_LIMIT ? NSVG__COORD_LIMIT : x;
+}
+static int nsvg__fixLimit(float x)
+{
+	if (isnan(x)) return 0;
+	return x < -(float)NSVG__FIX_LIMIT ? -NSVG__FIX_LIMIT : x > (float)NSVG__FIX_LIMIT ? NSVG__FIX_LIMIT : (int)x;
+}
+
 static void nsvg__flattenCubicBez(NSVGrasterizer* r,
 								  float x1, float y1, float x2, float y2,
 								  float x3, float y3, float x4, float y4,
@@ -559,7 +576,9 @@ static void nsvg__roundJoin(NSVGrasterizer* r, NSVGpoint* left, NSVGpoint* right
 	if (da < NSVG_PI) da += NSVG_PI*2;
 	if (da > NSVG_PI) da -= NSVG_PI*2;
 
-	n = (int)ceilf((nsvg__absf(da) / NSVG_PI) * (float)ncap);
+	n = ncap;
+	if ((nsvg__absf(da) / NSVG_PI) * (float)ncap < (float)ncap) // Tachyon: not with a NaN
+		n = (int)ceilf((nsvg__absf(da) / NSVG_PI) * (float)ncap);
 	if (n < 2) n = 2;
 	if (n > ncap) n = ncap;
 
@@ -602,7 +621,8 @@ static void nsvg__straightJoin(NSVGrasterizer* r, NSVGpoint* left, NSVGpoint* ri
 static int nsvg__curveDivs(float r, float arc, float tol)
 {
 	float da = acosf(r / (r + tol)) * 2.0f;
-	int divs = (int)ceilf(arc / da);
+	float d = ceilf(arc / da);
+	int divs = d < 1000.0f ? (int)d : 1000; // Tachyon: a huge radius makes da 0, and d infinite
 	if (divs < 2) divs = 2;
 	return divs;
 }
@@ -874,11 +894,12 @@ static NSVGactiveEdge* nsvg__addActive(NSVGrasterizer* r, NSVGedge* e, float sta
 	float dxdy = (e->x1 - e->x0) / (e->y1 - e->y0);
 //	STBTT_assert(e->y0 <= start_point);
 	// round dx down to avoid going too far
+	// Tachyon: limited, see nsvg__fixLimit
 	if (dxdy < 0)
-		z->dx = (int)(-nsvg__roundf(NSVG__FIX * -dxdy));
+		z->dx = -nsvg__fixLimit(nsvg__roundf(NSVG__FIX * -dxdy));
 	else
-		z->dx = (int)nsvg__roundf(NSVG__FIX * dxdy);
-	z->x = (int)nsvg__roundf(NSVG__FIX * (e->x0 + dxdy * (startPoint - e->y0)));
+		z->dx = nsvg__fixLimit(nsvg__roundf(NSVG__FIX * dxdy));
+	z->x = nsvg__fixLimit(nsvg__roundf(NSVG__FIX * (e->x0 + dxdy * (startPoint - e->y0))));
 //	z->x -= off_x * FIX;
 	z->ey = e->y1;
 	z->next = 0;
@@ -1411,13 +1432,13 @@ void nsvgRasterize(NSVGrasterizer* r,
 
                 nsvg__flattenShape(r, shape, scale);
 
-                // Scale and translate edges
+                // Scale and translate edges (Tachyon: within NSVG__COORD_LIMIT)
                 for (i = 0; i < r->nedges; i++) {
                     e = &r->edges[i];
-                    e->x0 = tx + e->x0;
-                    e->y0 = (ty + e->y0) * NSVG__SUBSAMPLES;
-                    e->x1 = tx + e->x1;
-                    e->y1 = (ty + e->y1) * NSVG__SUBSAMPLES;
+                    e->x0 = nsvg__limitf(tx + e->x0);
+                    e->y0 = nsvg__limitf((ty + e->y0) * NSVG__SUBSAMPLES);
+                    e->x1 = nsvg__limitf(tx + e->x1);
+                    e->y1 = nsvg__limitf((ty + e->y1) * NSVG__SUBSAMPLES);
                 }
 
                 // Rasterize edges
@@ -1438,13 +1459,13 @@ void nsvgRasterize(NSVGrasterizer* r,
 
     //			dumpEdges(r, "edge.svg");
 
-                // Scale and translate edges
+                // Scale and translate edges (Tachyon: within NSVG__COORD_LIMIT)
                 for (i = 0; i < r->nedges; i++) {
                     e = &r->edges[i];
-                    e->x0 = tx + e->x0;
-                    e->y0 = (ty + e->y0) * NSVG__SUBSAMPLES;
-                    e->x1 = tx + e->x1;
-                    e->y1 = (ty + e->y1) * NSVG__SUBSAMPLES;
+                    e->x0 = nsvg__limitf(tx + e->x0);
+                    e->y0 = nsvg__limitf((ty + e->y0) * NSVG__SUBSAMPLES);
+                    e->x1 = nsvg__limitf(tx + e->x1);
+                    e->y1 = nsvg__limitf((ty + e->y1) * NSVG__SUBSAMPLES);
                 }
 
                 // Rasterize edges

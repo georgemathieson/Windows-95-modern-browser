@@ -21,3 +21,11 @@ Local changes, each marked "Tachyon:" in the code:
    `objectBoundingBox` units (the default) that are plain numbers, like
    `x2="1"`, are fractions of the shape's box, as SVG says; NanoSVG read
    them as pixels, so such gradients came out as their last colour.
+2. `nanosvgrast.h`: float to int conversions that could be out of range,
+   which is undefined behaviour (the image fuzzer found the first). Edges
+   are kept within `NSVG__COORD_LIMIT` (262,144 pixels across, subsamples
+   down, far past any canvas) as they're translated and scaled, so that
+   stepping along them in fixed point can't overflow; `nsvg__addActive`
+   limits an almost horizontal edge's step (`nsvg__fixLimit`); a round
+   join's segment count survives a NaN angle; and `nsvg__curveDivs` caps
+   its count at 1,000, where a huge radius made it infinite.
