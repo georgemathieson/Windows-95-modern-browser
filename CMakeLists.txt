@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(tachyon VERSION 0.3.0 LANGUAGES C)
+project(tachyon VERSION 0.4.0 LANGUAGES C)
 
-set(TACHYON_SPRINT 3)
-set(TACHYON_SPRINT_NAME "First Light")
+set(TACHYON_SPRINT 4)
+set(TACHYON_SPRINT_NAME "Images and fonts")
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -13,7 +13,11 @@ option(TACHYON_WERROR "Treat compiler warnings as errors" OFF)
 option(TACHYON_FUZZ "Build the libFuzzer targets, with AddressSanitizer and UBSan (clang, host only)" OFF)
 
 if(TACHYON_FUZZ)
-  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined)
+  # Not -fsanitize=function: Wuffs calls its decoders through function
+  # pointers that take the decoder as void *, by design (see
+  # third_party/wuffs/README.tachyon.md).
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize=function
+                      -fno-sanitize-recover=undefined)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
@@ -84,6 +88,7 @@ enable_testing()
 
 add_subdirectory(third_party/mbedtls)
 add_subdirectory(third_party/zlib)
+add_subdirectory(third_party/brotli)
 add_subdirectory(src/core)
 if(WIN32)
   add_subdirectory(src/platform/win32)

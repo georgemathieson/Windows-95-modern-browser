@@ -45,19 +45,43 @@ add_custom_command(
   COMMENT "Generating HTML parser test cases"
   VERBATIM)
 
+# Test files (images...) compiled in as C arrays.
+file(GLOB TEST_BLOBS ${CMAKE_CURRENT_SOURCE_DIR}/data/images/* ${CMAKE_CURRENT_SOURCE_DIR}/data/fonts/*)
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/blobs.c
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_blobs.py ${CMAKE_CURRENT_BINARY_DIR}/blobs.c
+          ${TEST_BLOBS}
+  DEPENDS ${PROJECT_SOURCE_DIR}/tools/gen_blobs.py ${TEST_BLOBS}
+  COMMENT "Compiling test files"
+  VERBATIM)
+
+# Samples of the Chinese, Japanese and Korean encoding indexes.
+file(GLOB ENCODING_INDEXES ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding/index-*.txt)
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/encoding_cases.c
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_encoding_tests.py
+          ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding ${CMAKE_CURRENT_BINARY_DIR}/encoding_cases.c
+  DEPENDS ${PROJECT_SOURCE_DIR}/tools/gen_encoding_tests.py ${ENCODING_INDEXES}
+  COMMENT "Sampling encoding indexes"
+  VERBATIM)
+
 add_executable(tachyon_tests
   ${CMAKE_CURRENT_BINARY_DIR}/url_cases.c
+  ${CMAKE_CURRENT_BINARY_DIR}/encoding_cases.c
   ${CMAKE_CURRENT_BINARY_DIR}/html_cases.c
   ${CMAKE_CURRENT_BINARY_DIR}/css_cases.c
+  ${CMAKE_CURRENT_BINARY_DIR}/blobs.c
   test_main.c
   test_buf.c
   test_css.c
   test_css_values.c
+  test_dither.c
   test_dom.c
   test_encoding.c
   test_fixup.c
   test_font.c
   test_html.c
+  test_image.c
   test_layout.c
   test_log.c
   test_net.c

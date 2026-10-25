@@ -13,6 +13,7 @@ typedef struct painter {
     tc_layout *l;
     tc_surface *s;
     tc_rect clip;
+    int sx, sy;                /* the scroll position, to give images document coordinates */
     const tc_box *propagated;  /* the box whose background is the canvas's */
 } painter;
 
@@ -31,6 +32,263 @@ static void fill(painter *p, int x, int y, int w, int h, uint32_t argb)
 {
     if (w > 0 && h > 0 && (argb >> 24))
         tc_surface_fill(p->s, tc_rect_intersect(p->clip, tc_rect_make(x, y, w, h)), argb);
+}
+
+/* ---- Images, gradients and background layers ---- */
+
+#define GRADIENT_LUT 512   /* colours along a gradient */
+#define MAX_TILES 200000   /* per layer per paint, so 1-pixel tiles can't stall */
+
+/* An image's pixels to draw, decoded on demand by the image source. where:
+   the part of the surface it covers, which may be more than the clip (an
+   animation's next frame must cover all of it). */
+static const tc_surface *image_pixels(painter *p, tc_image *img, tc_rect where, int w, int h)
+{
+    const tc_image_source *src = &p->l->images;
+    if (!img || !src->pixels)
+        return NULL;
+    where = tc_rect_intersect(where, tc_rect_make(0, 0, p->s->width, p->s->height));
+    where.x += p->sx;
+    where.y += p->sy;
+    return src->pixels(src->ctx, img, where, w, h);
+}
+
+static tc_image *url_image(painter *p, const tc_css_image *ref)
+{
+    const tc_image_source *src = &p->l->images;
+    return ref && ref->type == TC_CSS_IMAGE_URL && src->url ? src->url(src->ctx, ref) : NULL;
+}
+
+/* A premultiplied colour over an opaque pixel. */
+static uint32_t over(uint32_t dst, uint32_t src)
+{
+    uint32_t a = src >> 24, ia, r, g, b;
+    if (a == 255)
+        return src & 0x00FFFFFFu;
+    if (!a)
+        return dst;
+    ia = 255 - a;
+    r = TC_RED(src) + (TC_RED(dst) * ia + 127) / 255;
+    g = TC_GREEN(src) + (TC_GREEN(dst) * ia + 127) / 255;
+    b = TC_BLUE(src) + (TC_BLUE(dst) * ia + 127) / 255;
+    return TC_MIN(r, 255u) << 16 | TC_MIN(g, 255u) << 8 | TC_MIN(b, 255u);
+}
+
+static uint32_t premultiplied(uint32_t c)
+{
+    uint32_t a = c >> 24;
+    return a << 24 | (TC_RED(c) * a + 127) / 255 << 16 | (TC_GREEN(c) * a + 127) / 255 << 8 | (TC_BLUE(c) * a + 127) / 255;
+}
+
+static uint32_t mix(uint32_t a, uint32_t b, float t)
+{
+    uint32_t out = 0;
+    int shift;
+    for (shift = 0; shift < 32; shift += 8) {
+        float ca = (float)(a >> shift & 255), cb = (float)(b >> shift & 255);
+        out |= (uint32_t)(ca + (cb - ca) * t + 0.5f) << shift;
+    }
+    return out;
+}
+
+/* A linear gradient filling the rectangle (x, y, w, h), drawn inside clip. */
+static void paint_gradient(painter *p, const tc_css_image *g, float x, float y, float w, float h, tc_rect clip)
+{
+    static const float pi = 3.14159265f;
+    uint32_t lut[GRADIENT_LUT];
+    float pos[64], deg = g->angle, rad, dx, dy, len, first, last, span_t;
+    uint32_t n = TC_MIN(g->nstops, 64u), i, k;
+    int px0, py0;
+    tc_rect r = tc_rect_intersect(clip, tc_rect_make(px(x), px(y), px(x + w) - px(x), px(y + h) - px(y)));
+
+    if (tc_rect_is_empty(r) || n < 2 || w <= 0 || h <= 0)
+        return;
+    if (g->corner) {
+        /* Towards a corner: the angle that puts the other two corners on
+           the 50% line. */
+        float a = (float)atan2(h, w) * 180 / pi;
+        unsigned c = g->corner;
+        deg = c == (TC_CORNER_TOP | TC_CORNER_RIGHT)      ? a
+              : c == (TC_CORNER_BOTTOM | TC_CORNER_RIGHT) ? 180 - a
+              : c == (TC_CORNER_BOTTOM | TC_CORNER_LEFT)  ? 180 + a
+                                                          : 360 - a;
+    }
+    rad = deg * pi / 180;
+    dx = (float)sin(rad);
+    dy = -(float)cos(rad);
+    len = (float)(fabs(w * dx) + fabs(h * dy));
+    if (len <= 0)
+        return;
+    /* Stop positions as fractions of the gradient line: the first defaults
+       to 0, the last to 1, none goes back, and the rest are spread out. */
+    for (i = 0; i < n; i++)
+        pos[i] = g->stops[i].has_position ? tc_length_resolve(&g->stops[i].position, len) / len : -1e9f;
+    if (pos[0] < -1e8f)
+        pos[0] = 0;
+    if (pos[n - 1] < -1e8f)
+        pos[n - 1] = TC_MAX(1, pos[0]);
+    for (i = 1; i < n; i++)
+        if (pos[i] > -1e8f && pos[i] < pos[i - 1])
+            pos[i] = pos[i - 1];
+    for (i = 1; i < n; i++)
+        if (pos[i] < -1e8f) {
+            for (k = i + 1; pos[k] < -1e8f; k++)
+                ;
+            pos[i] = pos[i - 1] + (pos[k] - pos[i - 1]) / (float)(k - i + 1);
+        } else if (pos[i] < pos[i - 1]) {
+            pos[i] = pos[i - 1];
+        }
+    first = g->repeating ? pos[0] : 0;
+    last = g->repeating ? pos[n - 1] : 1;
+    span_t = last - first;
+    if (g->repeating && span_t <= 0) {
+        /* Nothing to repeat: the average colour (here, the last). */
+        first = 0, last = 1, span_t = 1;
+    }
+    for (k = 0, i = 0; k < GRADIENT_LUT; k++) {
+        float t = first + span_t * (float)k / (GRADIENT_LUT - 1);
+        while (i + 1 < n && pos[i + 1] < t)
+            i++;
+        if (t <= pos[0])
+            lut[k] = premultiplied(g->stops[0].color);
+        else if (i + 1 >= n || t >= pos[n - 1])
+            lut[k] = premultiplied(g->stops[n - 1].color);
+        else {
+            float seg = pos[i + 1] - pos[i];
+            lut[k] = mix(premultiplied(g->stops[i].color), premultiplied(g->stops[i + 1].color),
+                         seg > 0 ? (t - pos[i]) / seg : 1);
+        }
+    }
+    /* t along the line is linear in x and y: step it per pixel. */
+    px0 = r.x, py0 = r.y;
+    {
+        float cx = x + w / 2, cy = y + h / 2, step_x = dx / len;
+        int row, col;
+        for (row = 0; row < r.h; row++) {
+            uint32_t *out = p->s->pixels + (size_t)(py0 + row) * (size_t)p->s->stride + px0;
+            float t = ((px0 + 0.5f - cx) * dx + (py0 + row + 0.5f - cy) * dy) / len + 0.5f;
+            for (col = 0; col < r.w; col++, t += step_x) {
+                float u = (t - first) / span_t;
+                int idx;
+                if (g->repeating)
+                    u -= (float)floor(u);
+                idx = u <= 0 ? 0 : u >= 1 ? GRADIENT_LUT - 1 : (int)(u * (GRADIENT_LUT - 1) + 0.5f);
+                out[col] = over(out[col], lut[idx]);
+            }
+        }
+    }
+}
+
+/* One background layer over the box (x, y, w, h: its border box, or the
+   canvas's for the root's). area: where it's positioned; paint: where it
+   may be drawn. */
+static void paint_layer(painter *p, const tc_bg_layer *l, float ax, float ay, float aw, float ah, tc_rect paint)
+{
+    const tc_surface *pix = NULL;
+    tc_image *img = NULL;
+    float nw, nh, tw, th, ox, oy, gapx = 0, gapy = 0;
+    float x0, y0, x1, y1, tx, ty;
+    tc_rect clip = tc_rect_intersect(paint, p->clip);
+    uint32_t tiles = 0;
+
+    if (tc_rect_is_empty(clip) || !l->image || aw <= 0 || ah <= 0)
+        return;
+    if (l->image->type == TC_CSS_IMAGE_URL) {
+        if (!(img = url_image(p, l->image)))
+            return;
+        nw = (float)tc_image_width(img);
+        nh = (float)tc_image_height(img);
+    } else {
+        nw = aw, nh = ah; /* gradients have no size of their own */
+    }
+    /* The tile's size. */
+    if (l->size == TC_BG_COVER || l->size == TC_BG_CONTAIN) {
+        float sx = aw / nw, sy = ah / nh, k = l->size == TC_BG_COVER ? TC_MAX(sx, sy) : TC_MIN(sx, sy);
+        tw = nw * k, th = nh * k;
+    } else {
+        int has_w = l->width.kind == TC_SIZE_LENGTH, has_h = l->height.kind == TC_SIZE_LENGTH;
+        tw = has_w ? tc_length_resolve(&l->width.length, aw) : nw;
+        th = has_h ? tc_length_resolve(&l->height.length, ah) : nh;
+        if (has_w && !has_h && img)
+            th = nh * tw / nw;
+        else if (has_h && !has_w && img)
+            tw = nw * th / nh;
+    }
+    if (l->repeat_x == TC_BG_ROUND && tw > 0) {
+        float count = (float)floor(aw / tw + 0.5f);
+        tw = aw / (count < 1 ? 1 : count);
+    }
+    if (l->repeat_y == TC_BG_ROUND && th > 0) {
+        float count = (float)floor(ah / th + 0.5f);
+        th = ah / (count < 1 ? 1 : count);
+    }
+    if (!(tw >= 0.5f && th >= 0.5f) || tw > 1e6f || th > 1e6f)
+        return;
+    /* Where the first tile goes. */
+    ox = ax + tc_length_resolve(&l->x, aw - tw);
+    oy = ay + tc_length_resolve(&l->y, ah - th);
+    if (l->repeat_x == TC_BG_SPACE) {
+        float count = (float)floor(aw / tw);
+        if (count >= 2)
+            gapx = (aw - count * tw) / (count - 1), ox = ax;
+    }
+    if (l->repeat_y == TC_BG_SPACE) {
+        float count = (float)floor(ah / th);
+        if (count >= 2)
+            gapy = (ah - count * th) / (count - 1), oy = ay;
+    }
+    x0 = ox, y0 = oy, x1 = ox + tw, y1 = oy + th;
+    if (l->repeat_x != TC_BG_NO_REPEAT) {
+        float step = tw + gapx;
+        x0 = ox - (float)ceil((ox - clip.x) / step) * step;
+        x1 = (float)(clip.x + clip.w);
+    }
+    if (l->repeat_y != TC_BG_NO_REPEAT) {
+        float step = th + gapy;
+        y0 = oy - (float)ceil((oy - clip.y) / step) * step;
+        y1 = (float)(clip.y + clip.h);
+    }
+    if (img) {
+        /* The tiles, or the one tile, in the painting area. */
+        tc_rect where = paint;
+        if (l->repeat_x == TC_BG_NO_REPEAT)
+            where.x = px(ox), where.w = px(ox + tw) - where.x;
+        if (l->repeat_y == TC_BG_NO_REPEAT)
+            where.y = px(oy), where.h = px(oy + th) - where.y;
+        if (!(pix = image_pixels(p, img, tc_rect_intersect(where, paint), px(tw), px(th))))
+            return;
+    }
+    for (ty = y0; ty < y1 && tiles < MAX_TILES; ty += th + gapy)
+        for (tx = x0; tx < x1 && tiles < MAX_TILES; tx += tw + gapx, tiles++) {
+            if (pix) {
+                int ix = px(tx), iy = px(ty);
+                tc_surface_draw_image(p->s, clip, pix, tc_rect_make(ix, iy, px(tx + tw) - ix, px(ty + th) - iy));
+            } else {
+                paint_gradient(p, l->image, tx, ty, tw, th, clip);
+            }
+        }
+}
+
+/* A box's background layers, bottom (last) first. */
+static void paint_layers(painter *p, const tc_box *b, float x, float y, float w, float h, const tc_rect *canvas)
+{
+    const tc_backgrounds *bg = b->style->backgrounds;
+    uint32_t i;
+    for (i = bg->count; i-- > 0;) {
+        const tc_bg_layer *l = &bg->layers[i];
+        float in_o = l->origin == TC_BG_BORDER_BOX ? 0 : 1, in_c = l->clip == TC_BG_BORDER_BOX ? 0 : 1;
+        float pad_o = l->origin == TC_BG_CONTENT_BOX ? 1 : 0, pad_c = l->clip == TC_BG_CONTENT_BOX ? 1 : 0;
+        float ax = x + in_o * b->border[LEFT] + pad_o * b->padding[LEFT];
+        float ay = y + in_o * b->border[TOP] + pad_o * b->padding[TOP];
+        float aw = w - in_o * (b->border[LEFT] + b->border[RIGHT]) - pad_o * (b->padding[LEFT] + b->padding[RIGHT]);
+        float ah = h - in_o * (b->border[TOP] + b->border[BOTTOM]) - pad_o * (b->padding[TOP] + b->padding[BOTTOM]);
+        float cx = x + in_c * b->border[LEFT] + pad_c * b->padding[LEFT];
+        float cy = y + in_c * b->border[TOP] + pad_c * b->padding[TOP];
+        float cw = w - in_c * (b->border[LEFT] + b->border[RIGHT]) - pad_c * (b->padding[LEFT] + b->padding[RIGHT]);
+        float ch = h - in_c * (b->border[TOP] + b->border[BOTTOM]) - pad_c * (b->padding[TOP] + b->padding[BOTTOM]);
+        tc_rect paint = canvas ? *canvas : tc_rect_make(px(cx), px(cy), px(cx + cw) - px(cx), px(cy + ch) - px(cy));
+        paint_layer(p, l, ax, ay, aw, ah, paint);
+    }
 }
 
 static uint32_t shade(uint32_t c, int light)
@@ -100,8 +358,11 @@ static void paint_box_decorations(painter *p, const tc_box *b, float x, float y,
 {
     const tc_style *s = b->style;
     int x0 = px(x), y0 = px(y), x1 = px(x + w), y1 = px(y + h), bw[4], i;
-    if (b != p->propagated)
+    if (b != p->propagated) {
         fill(p, x0, y0, x1 - x0, y1 - y0, s->background_color);
+        if (s->backgrounds)
+            paint_layers(p, b, x, y, w, h, NULL);
+    }
     for (i = 0; i < 4; i++)
         bw[i] = s->border_width[i] > 0 && s->border_width[i] < 1 ? 1 : px(s->border_width[i]);
     if (!(edges & 1))
@@ -153,6 +414,19 @@ static void paint_marker(painter *p, const tc_box *b, float x, float y)
 
     if (ms->visibility != TC_VISIBILITY_VISIBLE)
         return;
+    if (b->style->list_style_image) {
+        tc_image *img = url_image(p, b->style->list_style_image);
+        if (img) {
+            /* Its own size, sitting on the baseline, a gap before the text. */
+            int iw = tc_image_width(img), ih = tc_image_height(img), ix = px(mx - fs * 0.4f) - iw;
+            int iy = px(base) - ih;
+            const tc_surface *pix = image_pixels(p, img, tc_rect_make(ix, iy, iw, ih), iw, ih);
+            if (pix) {
+                tc_surface_draw_image(p->s, p->clip, pix, tc_rect_make(ix, iy, iw, ih));
+                return;
+            }
+        }
+    }
     switch (b->style->list_style_type) {
     case TC_LIST_DISC:
     case TC_LIST_CIRCLE:
@@ -197,7 +471,7 @@ static void paint_marker(painter *p, const tc_box *b, float x, float y)
     }
 }
 
-/* Replaced elements, until Sprint 4 draws pictures. */
+/* Replaced elements: pictures, and placeholders for the rest. */
 static void paint_replaced(painter *p, const tc_box *b, float x, float y)
 {
     const tc_style *s = b->style;
@@ -210,7 +484,33 @@ static void paint_replaced(painter *p, const tc_box *b, float x, float y)
     int x0 = px(cx), y0 = px(cy), w = px(cx + cw) - x0, h = px(cy + ch) - y0;
 
     switch (b->replaced) {
-    case TC_REPLACED_IMAGE:
+    case TC_REPLACED_IMAGE: {
+        const tc_image_source *src = &p->l->images;
+        float density = 1;
+        tc_image *img = b->element && src->element ? src->element(src->ctx, b->element, 0, &density) : NULL;
+        const tc_surface *pix = NULL;
+        if (img && density > 0 && cw > 0 && ch > 0) {
+            /* object-fit and object-position place it in the content box. */
+            float nw = tc_image_width(img) / density, nh = tc_image_height(img) / density, k, dw, dh, dx, dy;
+            tc_rect dst;
+            switch (s->object_fit) {
+            case TC_FIT_CONTAIN: k = TC_MIN(cw / nw, ch / nh); break;
+            case TC_FIT_COVER: k = TC_MAX(cw / nw, ch / nh); break;
+            case TC_FIT_NONE: k = 1; break;
+            case TC_FIT_SCALE_DOWN: k = TC_MIN(1, TC_MIN(cw / nw, ch / nh)); break;
+            default: k = 0; break;
+            }
+            dw = k ? nw * k : cw;
+            dh = k ? nh * k : ch;
+            dx = cx + tc_length_resolve(&s->object_position[0], cw - dw);
+            dy = cy + tc_length_resolve(&s->object_position[1], ch - dh);
+            dst = tc_rect_make(px(dx), px(dy), px(dx + dw) - px(dx), px(dy + dh) - px(dy));
+            pix = image_pixels(p, img, tc_rect_intersect(dst, tc_rect_make(x0, y0, w, h)), dst.w, dst.h);
+            if (pix) {
+                tc_surface_draw_image(p->s, tc_rect_intersect(p->clip, tc_rect_make(x0, y0, w, h)), pix, dst);
+                break;
+            }
+        }
         if (w >= 4 && h >= 4 && (s->width.kind == TC_SIZE_LENGTH || s->height.kind == TC_SIZE_LENGTH)) {
             /* A frame where the picture will go. */
             fill(p, x0, y0, w, 1, 0xFFA0A0A0u);
@@ -224,6 +524,7 @@ static void paint_replaced(painter *p, const tc_box *b, float x, float y)
             p->clip = saved;
         }
         break;
+    }
     case TC_REPLACED_TEXT_FIELD:
         if (b->len) {
             int placeholder = !b->element || !tc_dom_get_attr(b->element, "value") ||
@@ -348,6 +649,8 @@ void tc_paint(const tc_layout *l, tc_surface *s, tc_rect clip, float scroll_x, f
     p.l = (tc_layout *)l;
     p.s = s;
     p.clip = tc_rect_intersect(clip, tc_rect_make(0, 0, s->width, s->height));
+    p.sx = px(scroll_x);
+    p.sy = px(scroll_y);
     p.propagated = NULL;
     if (tc_rect_is_empty(p.clip))
         return;
@@ -367,9 +670,22 @@ void tc_paint(const tc_layout *l, tc_surface *s, tc_rect clip, float scroll_x, f
         canvas = body->style->background_color;
         p.propagated = body;
     }
+    if (html && !p.propagated && html->style->backgrounds)
+        p.propagated = html;
+    else if (body && !p.propagated && body->style->backgrounds)
+        p.propagated = body;
     if ((canvas >> 24) != 255)
         tc_surface_fill(s, p.clip, 0xFFFFFFFFu);
     tc_surface_fill(s, p.clip, canvas);
+    if (p.propagated && p.propagated->style->backgrounds && html) {
+        /* The root's (or body's) images cover the canvas, positioned on the
+           root element's box. */
+        float hx = -scroll_x + l->root->x + html->x, hy = -scroll_y + l->root->y + html->y;
+        tc_rect all = tc_rect_make(px(-scroll_x), px(-scroll_y), px(l->doc_w), px(l->doc_h));
+        tc_box root = *p.propagated;
+        root.border[0] = root.border[1] = root.border[2] = root.border[3] = 0;
+        paint_layers(&p, &root, hx, hy, html->w, html->h, &all);
+    }
     if (l->root)
         paint_box(&p, l->root, -scroll_x, -scroll_y, 0);
 }

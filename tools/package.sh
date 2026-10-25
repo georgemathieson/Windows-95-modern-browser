@@ -5,10 +5,17 @@
 #
 # Produces, in OUT_DIR:
 #   tachyon-VERSION-win95-setup.exe  the installer (needs NSIS's makensis)
-#   tachyon-VERSION-win95.zip   everything, for copying into a VM or machine
+#   tachyon-VERSION-win95.zip   everything, for copying into a VM or machine, with
+#                               the font pack in TACHYON\FONTS
 #   tachyon-VERSION-win95.img   a 1.44 MB floppy image with SETUP.EXE, the installer
 #                               (needs mtools; TACHYON.EXE alone no longer fits)
 #   tachyon-VERSION-win95.iso   a CD-ROM image with everything and SETUP.EXE (needs genisoimage)
+#
+# The optional font pack (decision 36) comes from Ubuntu's fonts-wqy-microhei
+# and fonts-dejavu-core packages: WenQuanYi Micro Hei for Chinese, Japanese
+# and Korean, DejaVu Sans for Greek, Cyrillic and the rest. It sits in FONTS
+# beside SETUP.EXE (on the CD) and TACHYON.EXE (in the zip); the installer's
+# "Fonts for other languages" copies it from there. The floppy has no room.
 #   tachyon-VERSION-win95-symbols.txt  TACHYON.EXE's function addresses, for reading
 #                               crash reports with tools/symbolize.py
 #
@@ -58,6 +65,13 @@ INSTALLING
   Panel. Or don't install it at all: TACHYON.EXE needs no other files, so
   you can copy it anywhere and double-click it.
 
+FONTS FOR OTHER LANGUAGES (on the CD and in the zip)
+  Windows 95's own fonts only cover Western European languages. The FONTS
+  folder holds free fonts for Chinese, Japanese, Korean, Greek, Cyrillic
+  and symbols; Setup installs them unless you untick "Fonts for other
+  languages". Tachyon uses fonts you have installed in Windows first.
+  To use them without installing, keep FONTS next to TACHYON.EXE.
+
 RUNNING
   Type an address such as en.wikipedia.org/wiki/Windows_95 and press
   Enter. Click links to follow them; Back and Forward go through the
@@ -66,15 +80,18 @@ RUNNING
 WHAT WORKS IN THIS BUILD
   Tachyon fetches pages over HTTP and HTTPS (TLS 1.2 and 1.3, checked
   against Mozilla's trusted certificate authorities), parses their HTML
-  the way today's browsers do, loads their style sheets, and draws them
-  with its own layout engine in the TrueType fonts Windows 95 already has.
-  View > Document Tree and View > Page Source (Ctrl+U) show what's
-  underneath. Not yet: pictures (they show as frames or their
-  descriptions), tables and side-by-side layouts (laid out one under
+  the way today's browsers do, loads their style sheets and pictures
+  (PNG, JPEG, GIF, WebP, BMP and ICO; animated GIFs play), and draws them
+  with its own layout engine in the TrueType fonts Windows 95 already has,
+  with the font pack for other languages. On a 256-colour display pages
+  are dithered, so photographs keep their shades. View > Document Tree
+  and View > Page Source (Ctrl+U) show what's underneath. Not yet: SVG
+  pictures, web fonts, tables and side-by-side layouts (laid out one under
   another), scripts, forms and cookies. Those arrive in later sprints.
 
   Options: TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE.PEM]
            [--fonts FOLDER]   (more TrueType fonts to use)
+           [--dither]         (show pages as a 256-colour display would)
 
 FETCH.EXE (on the CD and in the zip)
   Downloads a page from an MS-DOS Prompt, for testing:
@@ -102,6 +119,32 @@ Tachyon is free software under the GNU General Public License v3
 TXT
 
 rm -f "$out/$name-setup.exe" "$out/$name.zip" "$out/$name.img" "$out/$name.iso" "$out/$name-symbols.txt"
+# The font pack, with short names for any Windows 95 disk.
+wqy=/usr/share/fonts/truetype/wqy/wqy-microhei.ttc
+dejavu=/usr/share/fonts/truetype/dejavu
+if [ -f "$wqy" ] && [ -f "$dejavu/DejaVuSans.ttf" ] && [ -f "$dejavu/DejaVuSans-Bold.ttf" ]; then
+  mkdir -p "$out/TACHYON/FONTS"
+  cp "$wqy" "$out/TACHYON/FONTS/WQYMICRO.TTC"
+  cp "$dejavu/DejaVuSans.ttf" "$out/TACHYON/FONTS/DEJAVU.TTF"
+  cp "$dejavu/DejaVuSans-Bold.ttf" "$out/TACHYON/FONTS/DEJAVUB.TTF"
+  {
+    echo "FONTS FOR OTHER LANGUAGES"
+    echo "Tachyon draws characters that Windows' own fonts lack with these:"
+    echo "  WQYMICRO.TTC  WenQuanYi Micro Hei (Chinese, Japanese, Korean)"
+    echo "  DEJAVU.TTF, DEJAVUB.TTF  DejaVu Sans (Greek, Cyrillic, symbols and more)"
+    echo "They are free fonts, under these licences."
+    echo
+    echo "=== WenQuanYi Micro Hei ==="
+    cat /usr/share/doc/fonts-wqy-microhei/copyright
+    echo
+    cat /usr/share/common-licenses/Apache-2.0
+    echo
+    echo "=== DejaVu Sans ==="
+    cat /usr/share/doc/fonts-dejavu-core/copyright
+  } | sed 's/$/\r/' > "$out/TACHYON/FONTS/FONTS.TXT"
+else
+  echo "package.sh: no font pack (apt-get install fonts-wqy-microhei fonts-dejavu-core)" >&2
+fi
 (cd "$out" && zip -q -r "$name.zip" TACHYON)
 
 # The packaged TACHYON.EXE is stripped; crash reports give addresses that

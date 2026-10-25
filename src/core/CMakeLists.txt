@@ -22,7 +22,8 @@ add_custom_command(
   COMMENT "Compiling root certificates"
   VERBATIM)
 
-# The WHATWG Encoding Standard's labels and single-byte tables.
+# The WHATWG Encoding Standard's labels and indexes.
+file(GLOB ENCODING_INDEXES ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding/index-*.txt)
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_encoding_data.c
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/gen_encodings.py
@@ -32,6 +33,7 @@ add_custom_command(
           ${CMAKE_CURRENT_BINARY_DIR}/generated/tc_encoding_data.c
   DEPENDS ${PROJECT_SOURCE_DIR}/tools/gen_encodings.py
           ${PROJECT_SOURCE_DIR}/third_party/whatwg-encoding/encodings.json
+          ${ENCODING_INDEXES}
           ${CMAKE_CURRENT_SOURCE_DIR}/tc_encoding.h
   COMMENT "Compiling encoding tables"
   VERBATIM)
@@ -68,6 +70,7 @@ add_library(tachyon_core STATIC
   tc_css_color.c
   tc_css_syntax.c
   tc_css_values.c
+  tc_dither.c
   tc_dom.c
   tc_encoding.c
   tc_entropy.c
@@ -75,10 +78,12 @@ add_library(tachyon_core STATIC
   tc_fetch.c
   tc_fixup.c
   tc_font.c
+  tc_font_check.c
   tc_font_stb.c
   tc_html_parser.c
   tc_html_sniff.c
   tc_html_tokenizer.c
+  tc_image.c
   tc_http.c
   tc_inflate.c
   tc_layout.c
@@ -94,18 +99,23 @@ add_library(tachyon_core STATIC
   tc_style_props.c
   tc_style_sheet.c
   tc_surface.c
+  tc_svg.c
   tc_tags.c
   tc_tls.c
   tc_url.c
   tc_url_host.c
   tc_utf8.c
+  tc_woff.c
+  tc_wuffs.c
 )
 target_include_directories(tachyon_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/third_party/stb
+  ${PROJECT_SOURCE_DIR}/third_party/wuffs
+  ${PROJECT_SOURCE_DIR}/third_party/nanosvg
   ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
-target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib)
+target_link_libraries(tachyon_core PUBLIC tachyon_platform mbedtls zlib brotlidec)
 if(NOT WIN32)
   target_link_libraries(tachyon_core PUBLIC m) # crtdll has the maths functions on Windows
 endif()

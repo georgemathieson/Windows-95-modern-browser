@@ -1285,8 +1285,15 @@ static stbtt__buf stbtt__cff_index_get(stbtt__buf b, int i)
 
 static stbtt_uint16 ttUSHORT(stbtt_uint8 *p) { return p[0]*256 + p[1]; }
 static stbtt_int16 ttSHORT(stbtt_uint8 *p)   { return p[0]*256 + p[1]; }
-static stbtt_uint32 ttULONG(stbtt_uint8 *p)  { return (p[0]<<24) + (p[1]<<16) + (p[2]<<8) + p[3]; }
-static stbtt_int32 ttLONG(stbtt_uint8 *p)    { return (p[0]<<24) + (p[1]<<16) + (p[2]<<8) + p[3]; }
+// Tachyon: shifted as unsigned (a byte of 128 or more shifted into an int's sign bit is undefined)
+static stbtt_uint32 ttULONG(stbtt_uint8 *p)  { return ((stbtt_uint32)p[0]<<24) + ((stbtt_uint32)p[1]<<16) + (p[2]<<8) + p[3]; }
+static stbtt_int32 ttLONG(stbtt_uint8 *p)    { return (stbtt_int32)ttULONG(p); }
+
+// Tachyon: a coordinate, kept within a short
+static stbtt_vertex_type stbtt__clamp16(float v)
+{
+   return (stbtt_vertex_type)(!(v > -32768.0f) ? -32768 : v > 32767.0f ? 32767 : v);
+}
 
 #define stbtt_tag4(p,c0,c1,c2,c3) ((p)[0] == (c0) && (p)[1] == (c1) && (p)[2] == (c2) && (p)[3] == (c3))
 #define stbtt_tag(p,str)           stbtt_tag4(p,str[0],str[1],str[2],str[3])
@@ -1863,11 +1870,12 @@ static int stbtt__GetGlyphShapeTT(const stbtt_fontinfo *info, int glyph_index, s
                stbtt_vertex* v = &comp_verts[i];
                stbtt_vertex_type x,y;
                x=v->x; y=v->y;
-               v->x = (stbtt_vertex_type)(m * (mtx[0]*x + mtx[2]*y + mtx[4]));
-               v->y = (stbtt_vertex_type)(n * (mtx[1]*x + mtx[3]*y + mtx[5]));
+               // Tachyon: clamped (a float out of a short's range is undefined)
+               v->x = stbtt__clamp16(m * (mtx[0]*x + mtx[2]*y + mtx[4]));
+               v->y = stbtt__clamp16(n * (mtx[1]*x + mtx[3]*y + mtx[5]));
                x=v->cx; y=v->cy;
-               v->cx = (stbtt_vertex_type)(m * (mtx[0]*x + mtx[2]*y + mtx[4]));
-               v->cy = (stbtt_vertex_type)(n * (mtx[1]*x + mtx[3]*y + mtx[5]));
+               v->cx = stbtt__clamp16(m * (mtx[0]*x + mtx[2]*y + mtx[4]));
+               v->cy = stbtt__clamp16(n * (mtx[1]*x + mtx[3]*y + mtx[5]));
             }
             // Append vertices.
             tmp = (stbtt_vertex*)STBTT_malloc((num_vertices+comp_num_verts)*sizeof(stbtt_vertex), info->userdata);

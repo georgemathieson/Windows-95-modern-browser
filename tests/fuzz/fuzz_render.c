@@ -5,16 +5,29 @@
  * The first input byte picks the mode and the viewport width. Even modes:
  * the rest is a page. Odd modes: the rest is a style sheet, applied to a
  * fixed page with a bit of everything. Text is set in the Liberation fonts
- * if they're installed (so glyph code runs too), else the box font. */
+ * if they're installed (so glyph code runs too), else the box font, with
+ * the test fonts for Chinese and Japanese characters they lack. Every web
+ * font a page asks for is the test font in WOFF2. The painted pixels are
+ * animated and dithered as the browser would. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "tc_dither.h"
 #include "tc_page.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static const char fixed_page[] =
-    "<!DOCTYPE html><html lang=en><head><title>t</title><style id=fuzz></style></head><body class=b>"
+    "<!DOCTYPE html><html lang=en><head><title>t</title>"
+    "<style>@font-face { font-family: W; src: url(w.woff2) format(woff2); unicode-range: U+4E00-9FFF, U+3040-309F }"
+    " @font-face { font-family: W; src: url(b.woff2); font-weight: 600 900 } [lang=ja] { font-family: W, serif }"
+    "</style><style id=fuzz></style></head><body class=b>"
+    "<img class=anim src='data:image/gif;base64,"
+    "R0lGODlhBAAEAPAAAP8AAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQECgAAACH/C0ltYWdlTWFnaWNrDmdhbW1hPTAuNDU0"
+    "NTQ1ACwAAAAABAAEAAACBISPCQUAIfkEBBQAAAAh/wtJbWFnZU1hZ2ljaw5nYW1tYT0wLjQ1NDU0NQAsAAAAAAIAAgCAAP8A"
+    "AAAAAgKEUQAh+QQEHgAAACH/C0ltYWdlTWFnaWNrDmdhbW1hPTAuNDU0NTQ1ACwAAAAABAAEAIAAAP8AAAACBISPCQUAOw=='>"
+    "<img src=later.png>"
     "<h1 id=top>Heading <small>small</small></h1>"
     "<p>Some <a href='#x'>link</a> text with <b>bold</b>, <i>italic</i>, <code>code</code>"
     " and <span style='display:inline-block;padding:2px'>an inline block</span>.<br>After a break.</p>"
@@ -25,8 +38,18 @@ static const char fixed_page[] =
     "<form><input value=v><input type=checkbox checked><select><option>o</select>"
     "<textarea>t</textarea><button>b</button></form>"
     "<img alt=alt width=20 height=10><iframe></iframe><hr><center>centred</center>"
+    "<img id=pic src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqChYJAC0Ox+VcAAAAHUlEQVQI1y3EsQEAMAzDIPx5P1eWMrBoYSmg3ysdukELeS2aDPQAAAAASUVORK5CYII='>"
+    "<div class=pics style='background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfqChYJAC0Ox+VcAAAAHUlEQVQI1y3EsQEAMAzDIPx5P1eWMrBoYSmg3ysdukELeS2aDPQAAAAASUVORK5CYII=) 3px 50% / 7px repeat-x, "
+    "linear-gradient(45deg, red, blue 40%, lime)'>tiled</div>"
     "<div hidden>hidden</div><span dir=rtl>\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D</span> caf\xC3\xA9 \xE2\x80\x94 "
     "\xF0\x9F\x98\x80<details><summary>s</summary>d</details><svg><circle/></svg>"
+    "<svg width=20 height=10 viewBox='0 0 4 2'><defs><linearGradient id=g x2=1><stop offset=0 stop-color=red />"
+    "<stop offset=1 stop-color=blue /></linearGradient></defs><path d='M0 0 L4 2 Q 2 0 0 2 Z' fill='url(#g)' "
+    "stroke=currentColor stroke-width=.5 transform='rotate(10 2 1)'/></svg>"
+    "<img src=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='4'><circle cx='4' "
+    "cy='2' r='2' fill='teal'/></svg>\">"
+    "<p lang=ja>\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E\xE3\x80\x8C\xE4\xB8\xAD\xE3\x80\x8D\xE3\x80\x82"
+    "<b>\xE3\x81\x82</b>\xE2\x98\x83</p>"
     "</body></html>";
 
 static tc_font_set *fonts(void)
@@ -38,6 +61,7 @@ static tc_font_set *fonts(void)
         if (!set)
             abort();
         tc_font_set_add_dir(set, "/usr/share/fonts/truetype/liberation");
+        tc_font_set_add_dir(set, TEST_FONTS_DIR); /* fallback for other scripts */
     }
     return set;
 }
@@ -53,15 +77,39 @@ static int fuzz_sheet(void *ctx, const char *url, tc_buf *body, char *charset, s
     return TC_ERR_INVALID; /* no sheets from the network */
 }
 
+static int fuzz_font(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size)
+{
+    static tc_buf font;
+    static int read;
+    (void)ctx;
+    (void)url;
+    (void)charset_size;
+    charset[0] = '\0';
+    if (!read) {
+        FILE *f = fopen(TEST_FONTS_DIR "/tachyon-test-cjk.woff2", "rb");
+        char chunk[4096];
+        size_t n;
+        read = 1;
+        tc_buf_init(&font);
+        while (f && (n = fread(chunk, 1, sizeof chunk, f)) > 0)
+            tc_buf_append(&font, chunk, n);
+        if (f)
+            fclose(f);
+    }
+    return font.len ? tc_buf_append(body, font.data, font.len) : TC_ERR_INVALID;
+}
+
 static void exercise(tc_page *p, float w)
 {
     tc_surface s;
     tc_url url;
+    tc_rect dirty;
+    size_t order[16];
     float x, y, dw, dh;
     int i;
 
     tc_page_load_styles(p, fuzz_sheet, NULL, NULL);
-    if (tc_page_layout(p, fonts(), w, 200) != TC_OK)
+    if (tc_page_layout(p, fonts(), w, 200) != TC_OK || tc_page_load_fonts(p, fonts(), fuzz_font, NULL, NULL) != TC_OK)
         return;
     tc_layout_size(p->layout, &dw, &dh);
     if (tc_surface_init(&s, 64, 48) == TC_OK) {
@@ -69,8 +117,18 @@ static void exercise(tc_page *p, float w)
         tc_paint(p->layout, &s, tc_rect_make(0, 0, 64, 48), 0, 0);
         tc_paint(p->layout, &s, tc_rect_make(5, 5, 50, 30), dw / 3, dh / 2);
         tc_paint(p->layout, &s, tc_rect_make(0, 0, 64, 48), 0, dh - 48);
+        /* Animations move on and are painted again; a palette display's
+           copy is dithered. */
+        tc_page_animate(p, 1000, &dirty);
+        tc_page_animate(p, 1100, &dirty);
+        tc_paint(p->layout, &s, tc_rect_make(dirty.x, dirty.y - (int)(dh - 48), dirty.w, dirty.h), 0, dh - 48);
+        {
+            static uint8_t index[64 * 48];
+            tc_dither(&s, tc_rect_make(0, 0, 64, 48), index, 64, (int)(dw / 3), (int)(dh / 2));
+        }
         tc_surface_free(&s);
     }
+    tc_page_image_order(p, dh / 3, dh / 2, order, TC_ARRAY_LEN(order));
     for (i = 0; i < 16; i++) {
         x = (float)(i * 37 % 300);
         y = dh * (float)i / 16;

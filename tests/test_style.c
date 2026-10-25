@@ -449,6 +449,121 @@ static void test_nesting(void)
     page_free(&p);
 }
 
+static void test_backgrounds(void)
+{
+    page p;
+    const tc_style *s;
+    const tc_bg_layer *l;
+    tc_stylesheet *sheet;
+    const char *css = "#a { background: url(img/a.png) no-repeat right 10px top / 20px auto,"
+                      " linear-gradient(to right, red, blue 80%) #eee }";
+    page_load(&p, "<!DOCTYPE html><style>@import 'x.css';"
+                  "#b { background: url('b.gif') center / cover repeat-x content-box }"
+                  "#c { background-image: none, url(c.png); background-position: left 5px bottom 2px, 30% }"
+                  "#d { list-style: square url(dot.png) inside; object-fit: cover; object-position: right bottom }"
+                  "#e { background: red, blue } #f { background-image: -webkit-linear-gradient(top, red, blue) }"
+                  "#g { background-image: linear-gradient(to top right, red 10%, currentcolor 20% 30%); color: lime }"
+                  "#h { background-image: linear-gradient(45deg, red) }"
+                  "#i { background-position: center left 10px }"
+                  "</style>"
+                  "<p id=a>a</p><p id=b>b</p><p id=c>c</p><ul><li id=d>d</ul><p id=e style='background-color: green'>e"
+                  "<p id=f>f<p id=g>g<p id=h>h<p id=i style='background-image: url(i.png)'>i");
+    if (p.count == 1 && tc_stylesheet_import_count(p.sources[0].sheet) == 1) {
+        sheet = tc_stylesheet_parse(css, strlen(css), TC_ORIGIN_AUTHOR, 0, "http://example.com/css/x.css");
+        tc_stylesheet_set_import(p.sources[0].sheet, 0, sheet);
+        page_style(&p, 800);
+    }
+    s = style(&p, "a");
+    CHECK_COLOR(s->background_color, 0xFFEEEEEE);
+    TC_CHECK(s->backgrounds && s->backgrounds->count == 2);
+    if (s->backgrounds && s->backgrounds->count == 2) {
+        l = &s->backgrounds->layers[0];
+        TC_CHECK(l->image && l->image->type == TC_CSS_IMAGE_URL);
+        if (l->image) {
+            TC_CHECK_STR(l->image->url, "img/a.png");
+            TC_CHECK_STR(l->image->base ? l->image->base : "", "http://example.com/css/x.css");
+        }
+        TC_CHECK_INT(l->repeat_x, TC_BG_NO_REPEAT);
+        TC_CHECK_INT(l->repeat_y, TC_BG_NO_REPEAT);
+        CHECK_PX(l->x.pct, 100);
+        CHECK_PX(l->x.px, -10);
+        CHECK_PX(l->y.pct, 0);
+        TC_CHECK_INT(l->width.kind, TC_SIZE_LENGTH);
+        CHECK_PX(l->width.length.px, 20);
+        TC_CHECK_INT(l->height.kind, TC_SIZE_AUTO);
+        TC_CHECK_INT(l->origin, TC_BG_PADDING_BOX);
+        TC_CHECK_INT(l->clip, TC_BG_BORDER_BOX);
+        l = &s->backgrounds->layers[1];
+        TC_CHECK(l->image && l->image->type == TC_CSS_IMAGE_LINEAR);
+        if (l->image && l->image->nstops == 2) {
+            CHECK_PX(l->image->angle, 90);
+            CHECK_COLOR(l->image->stops[0].color, 0xFFFF0000);
+            TC_CHECK(!l->image->stops[0].has_position);
+            CHECK_PX(l->image->stops[1].position.pct, 80);
+        } else {
+            TC_CHECK(0);
+        }
+    }
+    s = style(&p, "b");
+    TC_CHECK(s->backgrounds && s->backgrounds->count == 1);
+    if (s->backgrounds) {
+        l = &s->backgrounds->layers[0];
+        TC_CHECK(l->image && !l->image->base);
+        TC_CHECK_INT(l->size, TC_BG_COVER);
+        CHECK_PX(l->x.pct, 50);
+        CHECK_PX(l->y.pct, 50);
+        TC_CHECK_INT(l->repeat_x, TC_BG_REPEAT);
+        TC_CHECK_INT(l->repeat_y, TC_BG_NO_REPEAT);
+        TC_CHECK_INT(l->origin, TC_BG_CONTENT_BOX);
+        TC_CHECK_INT(l->clip, TC_BG_CONTENT_BOX);
+    }
+    s = style(&p, "c");
+    TC_CHECK(s->backgrounds && s->backgrounds->count == 2);
+    if (s->backgrounds && s->backgrounds->count == 2) {
+        TC_CHECK(s->backgrounds->layers[0].image == NULL);
+        l = &s->backgrounds->layers[1];
+        CHECK_PX(l->x.pct, 30); /* the positions repeat: the second layer gets the second */
+        CHECK_PX(l->y.pct, 50);
+        CHECK_PX(s->backgrounds->layers[0].x.px, 5);
+        CHECK_PX(s->backgrounds->layers[0].y.pct, 100);
+        CHECK_PX(s->backgrounds->layers[0].y.px, -2);
+    }
+    s = style(&p, "d");
+    TC_CHECK(s->list_style_image && s->list_style_image->url && !strcmp(s->list_style_image->url, "dot.png"));
+    TC_CHECK_INT(s->list_style_type, TC_LIST_SQUARE);
+    TC_CHECK_INT(s->object_fit, TC_FIT_COVER);
+    CHECK_PX(s->object_position[0].pct, 100);
+    CHECK_PX(s->object_position[1].pct, 100);
+    CHECK_PX(style(&p, "a")->object_position[0].pct, 50);
+    s = style(&p, "e"); /* a colour before the last layer: invalid */
+    TC_CHECK(s->backgrounds == NULL);
+    CHECK_COLOR(s->background_color, 0xFF008000);
+    s = style(&p, "f");
+    TC_CHECK(s->backgrounds && s->backgrounds->layers[0].image &&
+             s->backgrounds->layers[0].image->angle == 180);
+    s = style(&p, "g");
+    if (s->backgrounds && s->backgrounds->layers[0].image) {
+        const tc_css_image *g = s->backgrounds->layers[0].image;
+        TC_CHECK_INT(g->corner, TC_CORNER_TOP | TC_CORNER_RIGHT);
+        TC_CHECK_INT(g->nstops, 3); /* a stop with two positions is two stops */
+        if (g->nstops == 3) {
+            CHECK_COLOR(g->stops[1].color, 0xFF00FF00);
+            CHECK_PX(g->stops[2].position.pct, 30);
+        }
+    } else {
+        TC_CHECK(0);
+    }
+    TC_CHECK(style(&p, "h")->backgrounds == NULL); /* one stop isn't a gradient */
+    s = style(&p, "i");
+    if (s->backgrounds) {
+        CHECK_PX(s->backgrounds->layers[0].x.px, 10);
+        CHECK_PX(s->backgrounds->layers[0].y.pct, 50);
+    } else {
+        TC_CHECK(0);
+    }
+    page_free(&p);
+}
+
 static void test_huge_font_sizes(void)
 {
     page p;
@@ -675,6 +790,98 @@ static void test_sources(void)
     page_free(&p);
 }
 
+/* The page's @font-face rules for a viewport width. */
+static size_t faces(const page *p, float width, const tc_font_face ***out)
+{
+    tc_media_env env;
+    size_t n = 0;
+    env.width = env.device_width = width;
+    env.height = env.device_height = 600;
+    env.color_bits = 8;
+    TC_CHECK_INT(tc_style_font_faces(p->sources, p->count, &env, out, &n), TC_OK);
+    return n;
+}
+
+static void test_font_face(void)
+{
+    const tc_font_face **ff = NULL;
+    page p;
+    size_t n;
+    tc_stylesheet *imported;
+
+    page_load(&p, "<!DOCTYPE html><style>"
+                  "@font-face { font-family: 'My Font'; src: url(a.woff2) format('woff2'), url(b.ttf) format(truetype),"
+                  " url(c.eot) format('embedded-opentype'), local(Arial), url(d.svg#x) format(svg), url(e.otf)"
+                  " format(opentype) tech(color-COLRv1), url('f.woff2') format(woff2) tech(variations);"
+                  " font-weight: bold; font-style: italic;"
+                  " unicode-range: U+0-7F, U+4??, u+0025-00FF, U+A5, U+1e3; }"
+                  "@font-face { font-family: Open  Sans; src: url(x); src: url(y); font-weight: 300;"
+                  " font-weight: heavy; unicode-range: U+110000; font-style: oblique 10deg }"
+                  "@font-face { font-family: Variable; src: url(v); font-weight: 900 100; unicode-range: U+5-1 }"
+                  "@font-face { font-family: serif; src: url(s) }"
+                  "@font-face { src: url(no-family) }"
+                  "@font-face { font-family: NoSource; src: local(Arial) }"
+                  "@font-face extra { font-family: Prelude; src: url(p) }"
+                  "@media print { @font-face { font-family: Print; src: url(print) } }"
+                  "@media (min-width: 500px) { @font-face { font-family: Wide; src: url(wide) } }"
+                  "@import 'late.css';"
+                  "</style><style>@import 'fonts.css';</style>");
+    n = faces(&p, 800, &ff);
+    TC_CHECK_INT(n, 4);
+    if (n == 4) {
+        TC_CHECK_STR(ff[0]->family, "My Font");
+        TC_CHECK_INT(ff[0]->nurls, 3);
+        if (ff[0]->nurls == 3) {
+            TC_CHECK_STR(ff[0]->urls[0], "a.woff2");
+            TC_CHECK_STR(ff[0]->urls[1], "b.ttf");
+            TC_CHECK_STR(ff[0]->urls[2], "f.woff2");
+        }
+        TC_CHECK(ff[0]->base == NULL);
+        TC_CHECK_INT(ff[0]->weight_min, 700);
+        TC_CHECK_INT(ff[0]->weight_max, 700);
+        TC_CHECK_INT(ff[0]->italic, 1);
+        TC_CHECK_INT(ff[0]->nranges, 5);
+        if (ff[0]->nranges == 5) {
+            static const uint32_t want[] = { 0, 0x7F, 0x400, 0x4FF, 0x25, 0xFF, 0xA5, 0xA5, 0x1E3, 0x1E3 };
+            size_t i;
+            for (i = 0; i < TC_ARRAY_LEN(want); i++)
+                TC_CHECK_INT(ff[0]->ranges[i], want[i]);
+        }
+        TC_CHECK_STR(ff[1]->family, "Open Sans");
+        TC_CHECK_INT(ff[1]->nurls, 1);
+        TC_CHECK_STR(ff[1]->urls[0], "y");
+        TC_CHECK_INT(ff[1]->weight_min, 300); /* "heavy" isn't a weight */
+        TC_CHECK(ff[1]->ranges == NULL);      /* past the last code point */
+        TC_CHECK_INT(ff[1]->italic, 1);
+        TC_CHECK_STR(ff[2]->family, "Variable");
+        TC_CHECK_INT(ff[2]->weight_min, 100);
+        TC_CHECK_INT(ff[2]->weight_max, 900);
+        TC_CHECK(ff[2]->ranges == NULL);
+        TC_CHECK_INT(ff[2]->italic, 0);
+        TC_CHECK_STR(ff[3]->family, "Wide");
+    }
+    free((void *)ff);
+    TC_CHECK_INT(faces(&p, 400, &ff), 3); /* too narrow for Wide */
+    free((void *)ff);
+
+    /* In an imported sheet: relative to it. */
+    if (p.count == 2 && tc_stylesheet_import_count(p.sources[1].sheet) == 1) {
+        const char *css = "@font-face { font-family: Imported; src: url(i.woff) }";
+        imported = tc_stylesheet_parse(css, strlen(css), TC_ORIGIN_AUTHOR, 0, "http://example.com/css/fonts.css");
+        tc_stylesheet_set_import(p.sources[1].sheet, 0, imported);
+        n = faces(&p, 800, &ff);
+        TC_CHECK_INT(n, 5);
+        if (n == 5) {
+            TC_CHECK_STR(ff[4]->family, "Imported");
+            TC_CHECK_STR(ff[4]->base, "http://example.com/css/fonts.css");
+        }
+        free((void *)ff);
+    } else {
+        TC_CHECK(0);
+    }
+    page_free(&p);
+}
+
 void tc_suite_style(void)
 {
     tc_style_init();
@@ -688,6 +895,7 @@ void tc_suite_style(void)
     TC_RUN(test_layers);
     TC_RUN(test_nesting);
     TC_RUN(test_huge_font_sizes);
+    TC_RUN(test_backgrounds);
     TC_RUN(test_revert_and_all);
     TC_RUN(test_blockify);
     TC_RUN(test_hints);
@@ -697,4 +905,5 @@ void tc_suite_style(void)
     TC_RUN(test_sheets);
     TC_RUN(test_imports);
     TC_RUN(test_sources);
+    TC_RUN(test_font_face);
 }

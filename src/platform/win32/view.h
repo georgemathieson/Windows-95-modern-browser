@@ -32,6 +32,8 @@ HWND tw_view_create(HWND parent, HINSTANCE instance, int id, tc_font_set *fonts)
 
 /* The size pages should be laid out for. */
 void tw_view_page_size(HWND view, int *w, int *h);
+/* The document rows in view. */
+void tw_view_visible(HWND view, int *top, int *bottom);
 
 /* A page from HTML text (built-in pages). */
 int tw_view_show_html(HWND view, const char *url, const char *html);
@@ -64,6 +66,25 @@ const char *tw_view_url(HWND view);
 
 /* A warning shown on the home page, e.g. about the clock (NULL for none). */
 void tw_view_set_warning(HWND view, const char *warning);
+
+/* The page shown, or NULL. It stays the view's: callers copy what they need. */
+const tc_page *tw_view_page(HWND view);
+/* A picture for the page arrived (index: the page's; img taken over, NULL
+   if it failed). Shown, or the page laid out again, a moment later. */
+void tw_view_image_arrived(HWND view, size_t index, tc_image *img);
+/* A web font for the page arrived (index: the page's; data NULL if it
+   couldn't be fetched). The page is laid out again a moment later. */
+void tw_view_font_arrived(HWND view, size_t index, const void *data, size_t len);
+
+/* Dither to 256 colours (decision 39) on any display, not only a
+   256-colour one, to see what one shows (--dither). */
+void tw_view_force_dither(int on);
+/* The top-level window's palette and display messages, passed on. On
+   WM_QUERYNEWPALETTE and WM_PALETTECHANGED (from another window) the view
+   realises its palette, repainting if the colours changed; returns whether
+   they did. On WM_DISPLAYCHANGE it checks the colour depth again. */
+int tw_view_realize_palette(HWND view);
+void tw_view_display_changed(HWND view);
 
 /* How many times the view has been painted (the smoke test checks this). */
 int tw_view_paint_count(HWND view);

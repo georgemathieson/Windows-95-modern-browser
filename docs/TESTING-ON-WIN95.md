@@ -56,54 +56,62 @@ is wrong.
 
 We can't distribute Windows 95. You need your own copy.
 
-## 4. This sprint's test (Sprint 3: First Light)
+## 4. This sprint's test (Sprint 4: Images and fonts)
 
-The demo: **read a Wikipedia article in Tachyon on Windows 95.**
+The demo: **read Wikipedia's Windows 95 article with its pictures, and the
+same article on the Japanese Wikipedia, in Japanese.**
 
 1. In Windows 95, check that networking works (**Start > Run**, `winipcfg`
    should show an IP address) and that the date and time are today's.
-2. Install Tachyon with the setup program (see section 2), over the old
-   version if you have it, and start it. The home page is now drawn by
-   Tachyon itself: a navy banner, then text and links.
-3. Click **Fonts** at the bottom of the home page (or type `about:fonts`).
-   It lists the fonts Tachyon found in Windows. Arial, Times New Roman and
-   Courier New should be there. Please send us the list.
-4. Click **Windows 95 on Wikipedia** (or type
-   `en.wikipedia.org/wiki/Windows_95`). While it loads, the status bar
-   names each style sheet it fetches. Then the article appears, in
-   Wikipedia's colours and fonts. Expected for now: pictures are empty
-   frames, or just their descriptions (Sprint 4), and tables, side columns
-   and floating boxes, like the infobox, are laid out one under another
-   rather than side by side (Sprint 7).
-5. Read some of it. Scroll with the scroll bar, Page Up and Page Down, the
-   arrow keys, Home and End, and the mouse wheel.
-6. Point at a link: the pointer becomes a hand and the status bar shows
-   where it goes. Click a heading in the article's contents: the page
-   jumps there and the address ends in `#...`. Click a link to another
-   article, then press **Back**.
-7. Resize the window, and maximise it: the text reflows to the new width
-   a moment after you stop.
-8. **View > Document Tree** shows the page's tree, **View > Page Source**
-   its source, and **View > Page** the page again. **Ctrl+U** goes back
-   and forth between the page and its source.
-9. Press **F5** to reload, and press **Stop** (or Esc) while a page loads.
-10. If your mouse has a wheel, or your virtual machine passes a trackpad's
-    two-finger scrolling on as a wheel: Sprint 2's crash on two-finger
-    scrolling (see the backlog) was in drawing code that has been
-    rewritten. Please try it again on a long page.
-11. Optional: in an MS-DOS Prompt in `C:\Program Files\Tachyon`, run
-    `FETCH -q --render https://en.wikipedia.org/wiki/Windows_95`. It loads
-    and lays out the page without showing it, and prints how long each
-    step took and how much memory the page used.
+2. Install Tachyon from the CD image or the zip (the floppy has no room for
+   the fonts). The installer now has a component, **Fonts for other
+   languages** (DejaVu Sans and WenQuanYi Micro Hei, about 6 MB): leave it
+   ticked. With the zip, keep the `FONTS` folder beside `TACHYON.EXE`.
+3. Type `about:fonts`. After Windows' own fonts come the pack's, DejaVu
+   Sans and WenQuanYi Micro Hei, last. Please send us the list.
+4. Open **Windows 95 on Wikipedia** from the home page (or type
+   `en.wikipedia.org/wiki/Windows_95`). The text appears first; then the
+   status bar counts "Loading pictures: N of M" while the pictures arrive,
+   those on screen first. The page only moves when a picture's size
+   wasn't in the page. Scroll down while they load: the ones you scroll to
+   come next. Expected for now: the infobox and other side boxes still sit
+   one under another rather than beside the text (Sprint 7).
+5. Open the same article in Japanese:
+   `ja.wikipedia.org/wiki/Microsoft_Windows_95`. The text should be
+   Japanese characters, not boxes, with lines breaking between
+   characters. Without the font pack (or a Japanese Windows or Internet
+   Explorer's Japanese language support), the characters are boxes:
+   that's expected.
+6. An animated picture: `en.wikipedia.org/wiki/GIF` has a rotating globe
+   near the top. It turns while it's on screen, and stops (to save the
+   processor) when you scroll it away or minimise the window.
+7. **256 colours.** In **Control Panel > Display > Settings**, set the
+   colour palette to **256 Color** (restart if Windows asks), and reload
+   the Windows 95 article. Photographs should look finely dotted, like a
+   newspaper picture, not blotchy or striped. Then set it back. (Wine
+   can't do 256 colours, so this is the only test of it.) If something
+   looks wrong, `TACHYON.EXE --dither` at any colour depth shows what
+   Tachyon means to draw.
+8. **Web fonts.** Many sites set their text in fonts of their own, such
+   as `www.bbc.co.uk/news` and `www.gov.uk`. The page appears in Windows'
+   fonts, then a moment later its text changes to the site's. A font
+   Tachyon can't read yet (one with PostScript outlines, on the backlog)
+   is named in `TACHYON.LOG`, and its text stays in Windows' fonts.
+9. If your mouse has a wheel, or your virtual machine passes a trackpad's
+   two-finger scrolling on as a wheel, scroll a long page with it (Sprint
+   2's crash, in the backlog, was in drawing code since rewritten).
+10. Optional: in an MS-DOS Prompt in `C:\Program Files\Tachyon`, run
+    `FETCH -q --render https://ja.wikipedia.org/wiki/Microsoft_Windows_95`.
+    It loads the page with its pictures and fonts without showing it, and
+    prints how long each step took and how much memory the page used.
 
 Please report:
 
-- For the Wikipedia article and one or two other sites: the status bar's
-  "Done: N KB in N s; N style sheets; shown in N s" (the time to download,
-  then the time to fetch the style sheets and lay the page out), and how
-  long scrolling a screen takes, roughly.
-- Anything drawn wrongly, with a screenshot if you can (Print Screen, then
-  paste into Paint), and anything slow.
+- For both articles: the status bar's "Done: N KB in N s; ... shown in N s"
+  line, and roughly how long the pictures took.
+- A screenshot of the Japanese article, and of the English one at 256
+  colours (Print Screen, then paste into Paint).
+- Anything drawn wrongly, and anything slow.
 - Any crash, with the end of `TACHYON.LOG` (section 5).
 
 ## 5. What to report

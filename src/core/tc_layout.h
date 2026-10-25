@@ -12,6 +12,7 @@
 #define TC_LAYOUT_H
 
 #include "tc_font.h"
+#include "tc_image.h"
 #include "tc_style.h"
 
 typedef enum tc_box_type {
@@ -20,7 +21,7 @@ typedef enum tc_box_type {
     TC_BOX_INLINE_BLOCK, /* an atomic inline: inline-block, inline-table, inline-flex... */
     TC_BOX_TEXT,
     TC_BOX_BREAK,        /* <br> */
-    TC_BOX_REPLACED      /* <img> and friends, drawn as placeholders until Sprint 4 */
+    TC_BOX_REPLACED      /* <img> and friends; those that aren't pictures are drawn as placeholders */
 } tc_box_type;
 
 /* What a replaced box stands for. */
@@ -83,9 +84,28 @@ struct tc_frag {
 
 typedef struct tc_layout tc_layout;
 
-/* Lay out a styled document for a viewport w x h. */
-int tc_layout_document(const tc_document *doc, const tc_styled *styled, tc_font_set *fonts, float w, float h,
-                       tc_layout **out);
+/* Where layout and painting get images: tc_page provides them. Any
+   callback may be NULL. */
+typedef struct tc_image_source {
+    /* The image an element shows (<img>, <input type=image>), or NULL while
+       it loads, when it failed, or when there's none. *density: its pixels
+       per CSS pixel (srcset). sizing: layout is asking for its size, so a
+       NULL answer means it must lay out again when the image arrives. */
+    tc_image *(*element)(void *ctx, const tc_element *el, int sizing, float *density);
+    /* The image a style's url() names, or NULL. */
+    tc_image *(*url)(void *ctx, const tc_css_image *ref);
+    /* An image's pixels to draw, decoded now if they need to be (NULL if
+       they can't be). where: the part of the document it covers that's
+       being painted, so animations know where to paint again; w x h: the
+       size it's drawn at, so SVG pictures can be drawn for it. */
+    const tc_surface *(*pixels)(void *ctx, tc_image *img, tc_rect where, int w, int h);
+    void *ctx;
+} tc_image_source;
+
+/* Lay out a styled document for a viewport w x h. images may be NULL (no
+   pictures: their alt text instead). */
+int tc_layout_document(const tc_document *doc, const tc_styled *styled, tc_font_set *fonts,
+                       const tc_image_source *images, float w, float h, tc_layout **out);
 void tc_layout_free(tc_layout *l);
 
 /* The root of the box tree (the initial containing block), and the

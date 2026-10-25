@@ -1,12 +1,12 @@
 /* Tachyon for Windows 95: program entry point.
  *
- *   TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE] [--fonts DIR] [--smoke-test]
- *               [--crash-test]
+ *   TACHYON.EXE [address] [--proxy HOST:PORT] [--cacert FILE] [--fonts DIR] [--dither]
+ *               [--smoke-test] [--crash-test]
  *
  * --proxy sends every request through an HTTP proxy. --cacert trusts the
  * certificate authorities in a PEM file too (a company proxy's, say).
  * --fonts adds the TrueType fonts in a directory (for Wine, which lacks
- * Windows 95's).
+ * Windows 95's). --dither shows pages as a 256-colour display would.
  * --smoke-test opens the window, waits for the first paint and exits with 0
  * (CI runs this under Wine). --crash-test crashes on purpose once the window
  * is open, to test the crash report in TACHYON.LOG. */
@@ -51,6 +51,8 @@ static void parse_command_line(char *cmdline, tw_shell_options *opts)
             cacert_file = strtok(NULL, " \t");
         } else if (strcmp(token, "--fonts") == 0) {
             fonts_dir = strtok(NULL, " \t");
+        } else if (strcmp(token, "--dither") == 0) {
+            tw_view_force_dither(1);
         } else if (!opts->start_url) {
             opts->start_url = token;
         }
@@ -67,12 +69,26 @@ static void stir_entropy(const MSG *msg)
         tc_entropy_add(msg, sizeof *msg);
 }
 
+/* Tachyon's optional font pack (decision 36), in FONTS beside the program.
+   Added after Windows' own fonts, so it's the last resort. */
+static size_t add_font_pack(tc_font_set *fonts)
+{
+    char dir[MAX_PATH];
+    DWORD n = GetModuleFileNameA(NULL, dir, MAX_PATH - 8);
+    char *slash = n && n < MAX_PATH - 8 ? strrchr(dir, '\\') : NULL;
+    if (!slash)
+        return 0;
+    strcpy(slash + 1, "FONTS");
+    return tc_font_set_add_dir(fonts, dir);
+}
+
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
 {
     tw_shell_options opts;
     HACCEL accel;
     HWND frame;
     MSG msg;
+    size_t pack;
 
     (void)prev;
     memset(&opts, 0, sizeof opts);
@@ -105,7 +121,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev, LPSTR cmdline, int show)
     if (fonts_dir)
         tc_font_set_add_dir(opts.fonts, fonts_dir);
     tc_font_set_add_system(opts.fonts);
-    tc_log("%u font faces", (unsigned)tc_font_set_count(opts.fonts));
+    pack = add_font_pack(opts.fonts);
+    tc_log("%u font faces, %u of them from the font pack", (unsigned)tc_font_set_count(opts.fonts), (unsigned)pack);
     if (!tw_view_register(instance) || !tw_shell_register(instance)) {
         MessageBoxA(NULL, "Tachyon could not register its window classes.", "Tachyon", MB_OK | MB_ICONSTOP);
         return 1;

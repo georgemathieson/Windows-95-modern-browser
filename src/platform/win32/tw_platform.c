@@ -303,10 +303,25 @@ static void font_from_registry(const char *name, const char *file, const char *f
     };
     char family[128], path[MAX_PATH];
     size_t len = strlen(name), i;
-    int weight = 400, italic = 0;
+    int weight = 400, italic = 0, collection = ends_with(file, ".ttc") || strchr(name, '&');
 
-    if (!ends_with(name, " (TrueType)") || !ends_with(file, ".ttf") || strchr(name, '&'))
-        return; /* bitmap fonts, and collections (read from their files instead) */
+    if (!ends_with(name, " (TrueType)") || (!ends_with(file, ".ttf") && !collection))
+        return; /* bitmap fonts */
+    if (strchr(file, ':') || file[0] == '\\') {
+        if (strlen(file) >= MAX_PATH)
+            return;
+        strcpy(path, file);
+    } else {
+        if (strlen(fonts_dir) + strlen(file) + 2 > MAX_PATH)
+            return;
+        strcpy(path, fonts_dir);
+        strcat(path, "\\");
+        strcat(path, file);
+    }
+    if (collection) { /* "MS Gothic & MS PGothic": the faces' names are in the file */
+        fn(ctx, path, NULL, 0, 0);
+        return;
+    }
     len -= 11;
     if (len >= sizeof family)
         return;
@@ -319,17 +334,6 @@ static void font_from_registry(const char *name, const char *file, const char *f
             italic = styles[i].italic;
             break;
         }
-    if (strchr(file, ':') || file[0] == '\\') {
-        if (strlen(file) >= MAX_PATH)
-            return;
-        strcpy(path, file);
-    } else {
-        if (strlen(fonts_dir) + strlen(file) + 2 > MAX_PATH)
-            return;
-        strcpy(path, fonts_dir);
-        strcat(path, "\\");
-        strcat(path, file);
-    }
     fn(ctx, path, family, weight, italic);
 }
 
@@ -382,5 +386,6 @@ void tc_system_fonts(void (*fn)(void *ctx, const char *path, const char *family,
         d.fn = fn;
         d.ctx = ctx;
         tc_dir_list(fonts_dir, ".ttf", font_file, &d);
+        tc_dir_list(fonts_dir, ".ttc", font_file, &d);
     }
 }

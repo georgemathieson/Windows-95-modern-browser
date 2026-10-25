@@ -23,7 +23,8 @@ piece will live. It changes as the sprints land.
  |    tc_selector        selector parsing and matching             |
  |    tc_css_syntax,     CSS tokenizer and parser; property values |
  |    tc_css_values      and colours (+ tc_css_color)              |
- |    tc_font            font matching, glyphs (stb_truetype)      |
+ |    tc_font            font matching, fallback for characters a  |
+ |                       font lacks, glyphs (stb_truetype)         |
  |    tc_html_parser     tree construction; page and fragment      |
  |                       parsing entry points                      |
  |    tc_html_tokenizer  the HTML tokenizer (+ tc_entities)        |
@@ -39,11 +40,16 @@ piece will live. It changes as the sprints land.
  |    tc_tls             Mbed TLS glue, root certificates          |
  |    tc_inflate         gzip and deflate                          |
  |    tc_entropy         the entropy pool (own SHA-256)            |
+ |    tc_image           pictures: sniffing, decoding (Wuffs),     |
+ |                       animation frames                          |
  |    tc_surface, tc_png 32-bit pixels, and PNG files of them      |
+ |    tc_dither          dithering to a 256-colour palette         |
+ |    tc_svg             SVG pictures through NanoSVG              |
  |    tc_log             the log and its ring of recent lines      |
- |    next: images (Sprint 4), JavaScript (Sprint 5)               |
+ |    next: web fonts (Sprint 4), JavaScript (Sprint 5)            |
  +-----------------------------------------------------------------+
- |  third_party          Mbed TLS 4.1, zlib, stb_truetype;         |
+ |  third_party          Mbed TLS 4.1, zlib, stb_truetype, Wuffs,  |
+ |                       NanoSVG;                                  |
  |                       QuickJS-ng (Sprint 5)                     |
  +-----------------------------------------------------------------+
 ```
@@ -148,6 +154,16 @@ and the test suites are its specification.
   `ScrollWindowEx` move the screen. Windows 95's scroll bars count to
   32,767, so long pages scroll in units of several pixels. Resizing lays
   the page out again 150 ms after the last change.
+- **Pictures** load after the page is shown, on a second thread, and are
+  decoded only when first painted; the page keeps decoded pixels within a
+  memory budget, dropping those drawn longest ago. Layout and painting ask
+  for them through a `tc_image_source`, so the core never waits for the
+  network. Painting reports where each picture went: a timer moves the
+  animations on screen to their next frame, and the view repaints just
+  those rectangles.
+- **256 colours** (decision 39): on a palette display the view dithers
+  each painted rectangle into an 8 bpp copy of the back buffer and blits
+  that with its palette realised.
 - **Limits.** The box tree stops nesting at 200 levels (deeper elements
   flow into their ancestor), lengths stay within ±2^25 px and font sizes
   within 10,000 px, and a page loads at most 64 style sheets, with imports

@@ -117,6 +117,10 @@ int render_file(const char *path, tc_font_set *fonts, int w, int h, int full, in
     t1 = tc_time_ms();
     if (!err)
         err = tc_page_layout(&page, fonts, (float)w, (float)h);
+    if (!err)
+        err = tc_page_load_fonts(&page, fonts, fetch_file, NULL, NULL);
+    if (!err)
+        err = tc_page_load_images(&page, fonts, fetch_file, NULL, NULL);
     if (!err) {
         tc_layout_size(page.layout, &out->doc_w, &out->doc_h);
         err = tc_surface_init(&out->surface, w, full ? (int)(out->doc_h + 0.5f) : h);
@@ -143,7 +147,7 @@ void rendered_free(rendered *r)
     tc_buf_free(&r->boxes);
 }
 
-tc_font_set *render_fonts(const char *dir)
+tc_font_set *render_fonts(const char *const *dirs_given, size_t ndirs)
 {
     static const char *const dirs[] = {
         "/usr/share/fonts/truetype/liberation",
@@ -153,8 +157,9 @@ tc_font_set *render_fonts(const char *dir)
     size_t i;
     if (!set)
         return NULL;
-    if (dir) {
-        tc_font_set_add_dir(set, dir);
+    if (ndirs) {
+        for (i = 0; i < ndirs; i++)
+            tc_font_set_add_dir(set, dirs_given[i]);
         return set;
     }
     for (i = 0; i < sizeof dirs / sizeof dirs[0]; i++)

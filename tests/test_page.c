@@ -291,10 +291,397 @@ static void test_png(void)
     tc_surface_free(&s);
 }
 
+/* Images served from the test files: the URL's last part is the file
+   (any query ignored, so one file can be two pictures). */
+typedef struct image_server {
+    char asked[1024];
+    unsigned count;
+} image_server;
+
+static int serve_image(void *ctx, const char *url, tc_buf *body, char *charset, size_t charset_size)
+{
+    image_server *s = ctx;
+    const char *name = strrchr(url, '/');
+    size_t i, len;
+    (void)charset_size;
+    charset[0] = '\0';
+    s->count++;
+    if (strlen(s->asked) + strlen(url) + 2 < sizeof s->asked) {
+        strcat(s->asked, url);
+        strcat(s->asked, " ");
+    }
+    name = name ? name + 1 : url;
+    len = strcspn(name, "?");
+    for (i = 0; i < tc_test_blob_count; i++)
+        if (strlen(tc_test_blobs[i].name) == len && strncmp(tc_test_blobs[i].name, name, len) == 0)
+            return tc_buf_append(body, tc_test_blobs[i].data, tc_test_blobs[i].len);
+    return TC_ERR_INVALID;
+}
+
+static int image_index_of(const tc_page *p, const char *url)
+{
+    size_t i;
+    for (i = 0; i < tc_page_image_count(p); i++)
+        if (strcmp(tc_page_image_url(p, i), url) == 0)
+            return (int)i;
+    return -1;
+}
+
+static void test_image_sources(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    tc_page p;
+    PAGE_FROM(&p, "http://example.com/dir/page.html",
+              "<!DOCTYPE html><style>#bg { background: url(/css/bg.png), url(data:image/gif;base64,"
+              "R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=) } li { list-style-image: url('dot.png') }</style>"
+              "<img id=a src=a.png>"
+              "<img id=b srcset='b1.png 1x, b2.png 2x' src=b0.png>"
+              "<img id=c srcset='c-small.png 200w, c-big.png 800w, c-huge.png 1600w' sizes='(max-width: 300px) 100vw, 50vw'>"
+              "<picture><source srcset=d.avif type=image/avif><source srcset=d.webp type=image/webp media='(min-width: 2000px)'>"
+              "<source srcset='d.webp 1x' type='image/webp; codecs=vp8'><img id=d src=d.jpg></picture>"
+              "<img id=e srcset='e,1.png 1x,e2.png 2x'>"
+              "<input type=image src=f.png><div id=bg></div><ul><li>x</ul>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/a.png") >= 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/b1.png") >= 0);   /* 1x for a 1x display */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/b0.png") < 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/c-small.png") >= 0); /* 50vw = 200px: 200w is 1x */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/c-big.png") < 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/d.webp") >= 0);    /* avif isn't supported; the media fails */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/d.jpg") < 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/e,1.png") >= 0);   /* a comma inside a URL */
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/f.png") >= 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/css/bg.png") >= 0);
+    TC_CHECK(image_index_of(&p, "http://example.com/dir/dot.png") >= 0);
+    /* The data: URL is decoded straight away. */
+    TC_CHECK_INT(tc_page_image_state(&p, (size_t)image_index_of(&p, "data:image/gif;base64,"
+                                                                   "R0lGODlhAQABAIAAAP///wAAACwAAAAAAQABAAACAkQBADs=")),
+                 TC_PAGE_IMAGE_LOADED);
+    TC_CHECK_INT(tc_page_image_state(&p, (size_t)image_index_of(&p, "http://example.com/dir/a.png")),
+                 TC_PAGE_IMAGE_WAITING);
+    tc_page_free(&p);
+    /* At 280px, sizes says 100vw: 200w is under 1x, so 800w (about 2.9x).
+       At 100px, 200w is 2x and wins. */
+    PAGE_FROM(&p, "http://example.com/", "<img srcset='s.png 200w, m.png 800w' sizes='(max-width: 300px) 100vw, 50vw'>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 280, 300), TC_OK);
+    TC_CHECK(image_index_of(&p, "http://example.com/m.png") >= 0);
+    tc_page_free(&p);
+    PAGE_FROM(&p, "http://example.com/", "<img srcset='s.png 200w, m.png 800w' sizes='(max-width: 300px) 100vw, 50vw'>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 100, 300), TC_OK);
+    TC_CHECK(image_index_of(&p, "http://example.com/s.png") >= 0);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+static void test_image_loading(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    tc_surface s;
+    float x, y;
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/",
+              "<!DOCTYPE html><style>body { margin: 0 } img { display: block }</style>"
+              "<img id=a src=pattern.png><img id=b src=pattern.png width=8 height=4><img id=c src=missing.png alt=x>"
+              "<div id=d style='height: 10px; background: url(halves.jpg) no-repeat'></div>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_image_count(&p), 3);
+    /* Before the images: #a has no size yet, #b has its attributes'. */
+    TC_CHECK(tc_page_fragment(&p, "c", &x, &y));
+    TC_CHECK(y == 4);
+    TC_CHECK_INT(tc_page_load_images(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    TC_CHECK_INT(srv.count, 3);
+    TC_CHECK_INT(tc_page_image_state(&p, (size_t)image_index_of(&p, "http://example.com/missing.png")),
+                 TC_PAGE_IMAGE_FAILED);
+    /* Laid out again: #a is 4x2 now. */
+    TC_CHECK(tc_page_fragment(&p, "c", &x, &y));
+    TC_CHECK(y == 6);
+    /* Painted: the pattern's red corner, and the JPEG behind #d. */
+    if (tc_surface_init(&s, 40, 40) == TC_OK) {
+        tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 0);
+        TC_CHECK_INT(tc_surface_get(&s, 0, 0), 0xFF0000);
+        TC_CHECK_INT(tc_surface_get(&s, 0, 2) & 0xFFFFFF, 0xFF0000); /* #b, 8x4: its red pixel doubled */
+        tc_surface_free(&s);
+    }
+    tc_page_free(&p);
+
+    /* An arrival only asks for a new layout when layout waited for it. */
+    PAGE_FROM(&p, "http://example.com/", "<img src=a.png width=10 height=10><img src=b.png>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    if (tc_page_image_count(&p) == 2) {
+        const tc_test_blob *png = tc_test_blob_get("pattern.png");
+        tc_image *img = NULL;
+        TC_CHECK_INT(tc_image_new(png->data, png->len, &img), TC_OK);
+        TC_CHECK_INT(tc_page_image_arrived(&p, 0, img), 0);
+        img = NULL;
+        TC_CHECK_INT(tc_image_new(png->data, png->len, &img), TC_OK);
+        TC_CHECK_INT(tc_page_image_arrived(&p, 1, img), 1);
+        TC_CHECK_INT(tc_page_image_arrived(&p, 1, NULL), 0); /* twice: ignored */
+    }
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+static void test_image_memory(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    tc_surface s;
+    memset(&srv, 0, sizeof srv);
+    /* Room for one 32x32 image's pixels at a time. */
+    PAGE_FROM(&p, "http://example.com/", "<!DOCTYPE html><style>body { margin: 0 }</style>"
+                                         "<img src=halves.jpg><img src=halves-progressive.jpg>");
+    tc_page_set_image_memory(&p, 32 * 32 * 4 + 100);
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_load_images(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    if (tc_surface_init(&s, 100, 40) == TC_OK) {
+        tc_paint(p.layout, &s, tc_rect_make(0, 0, 100, 40), 0, 0);
+        TC_CHECK((tc_surface_get(&s, 4, 20) & 0xFF0000) > 0xC00000);  /* the first was drawn... */
+        TC_CHECK((tc_surface_get(&s, 36, 20) & 0xFF0000) > 0xC00000); /* ...then the second */
+        tc_surface_free(&s);
+    }
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+/* The order pictures load in: what's in view first. */
+static void test_image_order(void)
+{
+    static const char *const from_top[] = { "top", "bg", "mid", "bottom", "hidden" };
+    static const char *const from_middle[] = { "mid", "bottom", "bg", "top", "hidden" };
+    tc_font_set *fonts = tc_font_set_new();
+    size_t order[8], n, i;
+    tc_page p;
+    char url[64];
+    PAGE_FROM(&p, "http://example.com/",
+              "<!DOCTYPE html><style>body { margin: 0 } img { display: block; width: 10px; height: 10px }"
+              "#bg { height: 10px; background: url(bg.png) } .pad { height: 1000px }</style>"
+              "<img src=hidden.png style='display: none'><img src=top.png><div id=bg></div><div class=pad></div>"
+              "<img src=mid.png><div class=pad></div><img src=bottom.png>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    n = tc_page_image_order(&p, 0, 300, order, TC_ARRAY_LEN(order));
+    TC_CHECK_INT(n, 5);
+    for (i = 0; i < n && i < 5; i++) {
+        snprintf(url, sizeof url, "http://example.com/%s.png", from_top[i]);
+        TC_CHECK_STR(tc_page_image_url(&p, order[i]), url);
+    }
+    /* Scrolled to the middle: then below, then above, nearest first. */
+    n = tc_page_image_order(&p, 1000, 1300, order, TC_ARRAY_LEN(order));
+    TC_CHECK_INT(n, 5);
+    for (i = 0; i < n && i < 5; i++) {
+        snprintf(url, sizeof url, "http://example.com/%s.png", from_middle[i]);
+        TC_CHECK_STR(tc_page_image_url(&p, order[i]), url);
+    }
+    TC_CHECK_INT(tc_page_image_order(&p, 0, 300, order, 2), 2);
+    /* Loaded ones aren't listed. */
+    tc_page_image_arrived(&p, order[0], NULL);
+    TC_CHECK_INT(tc_page_image_order(&p, 0, 300, order, TC_ARRAY_LEN(order)), 4);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+/* Inline <svg> is a picture made from its markup. */
+static void test_inline_svg(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    tc_page p;
+    tc_surface s;
+    PAGE_FROM(&p, "http://example.com/",
+              "<!DOCTYPE html><style>body { margin: 0; color: #00f } svg { display: block }</style>"
+              "<svg width=8 height=4><rect width=4 height=4 fill=red /><rect x=4 width=4 height=4 fill=currentColor />"
+              "<foreignObject><p>not drawn</p></foreignObject></svg>"
+              "<svg viewBox='0 0 2 1' style='width: 20px'><rect width=1 height=1 fill=lime /></svg>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_image_count(&p), 2);
+    TC_CHECK_INT(tc_page_image_state(&p, 0), TC_PAGE_IMAGE_LOADED);
+    TC_CHECK_INT(tc_page_image_state(&p, 1), TC_PAGE_IMAGE_LOADED);
+    if (tc_surface_init(&s, 40, 40) == TC_OK) {
+        tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 0);
+        TC_CHECK_INT(tc_surface_get(&s, 1, 1), 0xFF0000);
+        TC_CHECK_INT(tc_surface_get(&s, 5, 1), 0x0000FF); /* currentColor: the element's color */
+        /* The second is 20px wide, so 10px high, and its left half lime. */
+        TC_CHECK_INT(tc_surface_get(&s, 5, 9), 0x00FF00);
+        TC_CHECK_INT(tc_surface_get(&s, 15, 9), 0xFFFFFF);
+        TC_CHECK_INT(tc_surface_get(&s, 5, 15), 0xFFFFFF);
+        tc_surface_free(&s);
+    }
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+/* frames.gif: red for 100 ms, a green corner for 200, blue for 300. */
+static void test_animation(void)
+{
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    tc_surface s;
+    tc_rect dirty;
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/", "<!DOCTYPE html><style>body { margin: 0 } img { display: block }</style>"
+                                         "<img src=frames.gif><img src=pattern.png><div style='height: 1000px'></div>"
+                                         "<img src=frames.gif?2>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_load_images(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    if (tc_surface_init(&s, 40, 40) != TC_OK)
+        return;
+    /* Nothing painted yet: nothing to animate. */
+    TC_CHECK_INT(tc_page_animate(&p, 1000, &dirty), 0);
+    TC_CHECK(tc_rect_is_empty(dirty));
+    tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 0);
+    TC_CHECK_INT(tc_surface_get(&s, 0, 0), 0xFF0000);
+    /* Painted: the first frame's 100 ms start now. */
+    TC_CHECK_INT(tc_page_animate(&p, 1000, &dirty), 100);
+    TC_CHECK_INT(tc_page_animate(&p, 1060, &dirty), 40);
+    TC_CHECK(tc_rect_is_empty(dirty));
+    TC_CHECK_INT(tc_page_animate(&p, 1100, &dirty), 200);
+    TC_CHECK(dirty.x == 0 && dirty.y == 0 && dirty.w == 4 && dirty.h == 4);
+    tc_paint(p.layout, &s, dirty, 0, 0);
+    TC_CHECK_INT(tc_surface_get(&s, 0, 0), 0x00FF00);
+    TC_CHECK_INT(tc_surface_get(&s, 3, 3), 0xFF0000);
+    TC_CHECK_INT(tc_page_animate(&p, 1150, &dirty), 150);
+    /* A late call skips ahead rather than racing through frames. */
+    TC_CHECK_INT(tc_page_animate(&p, 2000, &dirty), 300);
+    TC_CHECK(!tc_rect_is_empty(dirty));
+    /* Scrolled away before the new frame is painted: it pauses. */
+    tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 500);
+    TC_CHECK_INT(tc_page_animate(&p, 2300, &dirty), 0);
+    TC_CHECK(tc_rect_is_empty(dirty));
+    /* The second copy comes into view, in document coordinates. */
+    tc_paint(p.layout, &s, tc_rect_make(0, 0, 40, 40), 0, 990);
+    TC_CHECK_INT(tc_page_animate(&p, 3000, &dirty), 100);
+    TC_CHECK_INT(tc_page_animate(&p, 3100, &dirty), 200);
+    TC_CHECK(dirty.x == 0 && dirty.y == 1006 && dirty.w == 4 && dirty.h == 4);
+    tc_surface_free(&s);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
+/* The font a text fragment starting with text is drawn with, or NULL. */
+static const tc_font *frag_font(const tc_box *b, const char *text, int depth)
+{
+    const tc_box *c;
+    const tc_font *found = NULL;
+    uint32_t i;
+    size_t len = strlen(text);
+    for (i = 0; i < b->nfrags && !found; i++) {
+        const tc_frag *f = &b->frags[i];
+        if (f->type == TC_FRAG_TEXT && f->len >= len && memcmp(f->text, text, len) == 0)
+            found = f->font;
+    }
+    for (c = b->first; c && !found && depth < 50; c = c->next)
+        found = frag_font(c, text, depth + 1);
+    return found;
+}
+
+static const char *family_of(const tc_page *p, const char *text, uint32_t cp)
+{
+    const tc_font *f = p->layout ? frag_font(tc_layout_root(p->layout), text, 0) : NULL;
+    return f ? tc_font_family(tc_font_for_char(f, cp), NULL, NULL) : "(no text)";
+}
+
+static void base64(const unsigned char *in, size_t len, char *out)
+{
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t i;
+    for (i = 0; i < len; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16 | (i + 1 < len ? (uint32_t)in[i + 1] << 8 : 0) | (i + 2 < len ? in[i + 2] : 0);
+        *out++ = digits[v >> 18];
+        *out++ = digits[v >> 12 & 63];
+        *out++ = i + 1 < len ? digits[v >> 6 & 63] : '=';
+        *out++ = i + 2 < len ? digits[v & 63] : '=';
+    }
+    *out = '\0';
+}
+
+static void test_web_fonts(void)
+{
+    static const char head[] =
+        "<!DOCTYPE html><meta charset=utf-8><style>"
+        "@font-face { font-family: Web; src: url(missing.woff2) format(woff2), url(fonts/tachyon-test-cjk.woff2)"
+        " format(woff2); unicode-range: U+4E00-9FFF }"
+        "@font-face { font-family: Web; src: url(never.woff2); unicode-range: U+0400-04FF }"
+        "@font-face { font-family: Later; src: url(later.woff2) }"
+        "@font-face { font-family: Data; src: url(data:font/woff2;base64,";
+    static const char tail[] =
+        ") }"
+        "#a { font-family: Web, 'Tachyon Test Symbols' } #b { font-family: 'Tachyon Test Symbols', Later }"
+        "#c { font-family: Data, 'Tachyon Test Symbols' }"
+        "</style><p id=a>\xE4\xB8\xAD abc</p><p id=b>xyz</p><p id=c>\xE3\x81\x82</p>";
+    const tc_test_blob *woff2 = tc_test_blob_get("tachyon-test-cjk.woff2"), *ttc = tc_test_blob_get("tachyon-test.ttc");
+    tc_font_set *fonts = tc_font_set_new();
+    image_server srv;
+    tc_page p;
+    char *html;
+
+    TC_CHECK(woff2 && ttc && fonts);
+    if (!woff2 || !ttc || !fonts || !(html = malloc(sizeof head + woff2->len * 2 + sizeof tail))) {
+        tc_font_set_free(fonts);
+        return;
+    }
+    /* Installed: the collection's two families. */
+    TC_CHECK_INT(tc_font_set_add_data(fonts, ttc->data, ttc->len, NULL), TC_OK);
+    strcpy(html, head);
+    base64(woff2->data, woff2->len, html + strlen(html));
+    strcat(html, tail);
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/dir/page.html", html);
+    free(html);
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_font_count(&p), 4);
+    if (tc_page_font_count(&p) == 4) {
+        /* Wanted: the face with the Chinese character. Not wanted: the
+           Cyrillic one, nor a family after an installed one. */
+        TC_CHECK_INT(tc_page_font_state(&p, 0), TC_PAGE_FONT_WAITING);
+        TC_CHECK_STR(tc_page_font_url(&p, 0), "http://example.com/dir/missing.woff2");
+        TC_CHECK_INT(tc_page_font_state(&p, 1), TC_PAGE_FONT_UNUSED);
+        TC_CHECK_STR(tc_page_font_url(&p, 1), "");
+        TC_CHECK_INT(tc_page_font_state(&p, 2), TC_PAGE_FONT_UNUSED);
+        TC_CHECK_INT(tc_page_font_arrived(&p, 2, woff2->data, woff2->len), 0); /* not waiting: ignored */
+        /* The data: URL font is there already. */
+        TC_CHECK_INT(tc_page_font_state(&p, 3), TC_PAGE_FONT_LOADED);
+        TC_CHECK_STR(family_of(&p, "\xE3\x81\x82", 0x3042), "Data");
+        /* Meanwhile the next family draws. */
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 0x4E2D), "Tachyon Test CJK");
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 'a'), "Tachyon Test Symbols");
+
+        /* The first src is missing; the second loads. */
+        TC_CHECK_INT(tc_page_load_fonts(&p, fonts, serve_image, &srv, NULL), TC_OK);
+        TC_CHECK_STR(srv.asked, "http://example.com/dir/missing.woff2 http://example.com/dir/fonts/tachyon-test-cjk.woff2 ");
+        TC_CHECK_INT(tc_page_font_state(&p, 0), TC_PAGE_FONT_LOADED);
+        TC_CHECK_INT(tc_page_font_state(&p, 1), TC_PAGE_FONT_UNUSED);
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 0x4E2D), "Web");
+        /* Its range has no Latin letters: they come from the next family. */
+        TC_CHECK_STR(family_of(&p, "\xE4\xB8\xAD", 'a'), "Tachyon Test Symbols");
+    }
+    tc_page_free(&p);
+
+    /* Every src failing: failed, and nothing more to fetch. */
+    memset(&srv, 0, sizeof srv);
+    PAGE_FROM(&p, "http://example.com/",
+              "<style>@font-face { font-family: Gone; src: url(a.woff), url(b.woff) } p { font-family: Gone }</style>"
+              "<p>text</p>");
+    TC_CHECK_INT(tc_page_layout(&p, fonts, 400, 300), TC_OK);
+    TC_CHECK_INT(tc_page_load_fonts(&p, fonts, serve_image, &srv, NULL), TC_OK);
+    TC_CHECK_INT(srv.count, 2);
+    TC_CHECK_INT(tc_page_font_state(&p, 0), TC_PAGE_FONT_FAILED);
+    tc_page_free(&p);
+    tc_font_set_free(fonts);
+}
+
 void tc_suite_page(void)
 {
     TC_RUN(test_style_sheets);
     TC_RUN(test_import_limits);
     TC_RUN(test_links_and_fragments);
     TC_RUN(test_png);
+    TC_RUN(test_image_sources);
+    TC_RUN(test_image_loading);
+    TC_RUN(test_image_memory);
+    TC_RUN(test_image_order);
+    TC_RUN(test_animation);
+    TC_RUN(test_inline_svg);
+    TC_RUN(test_web_fonts);
 }
